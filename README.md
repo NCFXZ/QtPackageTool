@@ -1,2 +1,2 @@
-# QtPackagerGUI
-QtPackagerGUI is a cross-platform packaging assistant for Qt C++ applications, designed for Windows. It provides an easy-to-use graphical interface to help developers package their Qt projects with the correct DLLs, plugins, and deployment options. 
+# Qt Package Tool
+Qt Package Tool is a Windows-only packaging assistant for Qt C++ projects, providing a simple interface to package .pro projects using qmake.
