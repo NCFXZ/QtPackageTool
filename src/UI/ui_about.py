@@ -1,3 +1,19 @@
+# Qt Package Tool - A PyQt6-based application
+# Copyright (c) 2025 NCFXZ
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import sys
 import os
 from pathlib import Path
@@ -58,13 +74,20 @@ class AboutUI(QWidget):
 
         sys_info_label_layout = QVBoxLayout()
 
-        sys_info_label1 = StrongBodyLabel("Qt Package Tool", self)
-        sys_info_label2 = CaptionLabel(f"Version: {version}", self)
-        sys_info_label3 = CaptionLabel(f"Release Date: {release_date}", self)
+        name_label = StrongBodyLabel("Qt Package Tool", self)
+        version_label = CaptionLabel(f"Version: {version}", self)
+        release_date_label = CaptionLabel(f"Release Date: {release_date}", self)
+        license_label = CaptionLabel(
+            "Copyright (c) 2025 NCFXZ<br>"
+            'Licensed under the GNU General Public License v3.0 (GPLv3). See <a href="https://github.com/NCFXZ/QtPackageTool/blob/main/LICENSE">LICENSE</a> file for details.<br>'
+            'This program uses <a href="https://riverbankcomputing.com/software/pyqt/intro">PyQt6 (GPLv3)</a>.'
+        )
+        license_label.setOpenExternalLinks(True)
 
-        sys_info_label_layout.addWidget(sys_info_label1)
-        sys_info_label_layout.addWidget(sys_info_label2)
-        sys_info_label_layout.addWidget(sys_info_label3)
+        sys_info_label_layout.addWidget(name_label)
+        sys_info_label_layout.addWidget(version_label)
+        sys_info_label_layout.addWidget(release_date_label)
+        sys_info_label_layout.addWidget(license_label)
         sys_info_label_layout.addStretch(1)
 
         sys_info_icon = QLabel(self)
