@@ -1,0 +1,11 @@
+colorthief==0.2.1
+darkdetect==0.8.0
+numpy==2.3.2
+pillow==11.3.0
+PyQt6==6.9.1
+PyQt6-Fluent-Widgets==1.8.6
+PyQt6-Frameless-Window==0.7.3
+PyQt6-Qt6==6.9.1
+PyQt6_sip==13.10.2
+pywin32==311
+scipy==1.16.1
