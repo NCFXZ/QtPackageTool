@@ -82,7 +82,7 @@ class MainUI(FluentWindow):
         """
         if getattr(sys, "frozen", False):
             # If the application is frozen (packaged), use the executable's directory
-            base_path = Path(sys.executable).parent
+            base_path = Path(sys.executable)
         else:
             # If running in source, go up three levels
             base_path = Path(__file__).resolve().parent.parent.parent

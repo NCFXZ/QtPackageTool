@@ -117,7 +117,7 @@ class AboutUI(QWidget):
         """
         if getattr(sys, "frozen", False):
             # Running in a bundled environment
-            base_path = Path(sys.executable).parent
+            base_path = Path(sys.executable)
         else:
             # Running in source, go up three levels
             base_path = Path(__file__).resolve().parent.parent.parent
