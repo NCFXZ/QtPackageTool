@@ -19,9 +19,11 @@ import os
 import sys
 import subprocess
 import re
+import threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QEvent
 from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget, QTableWidgetItem
 from PyQt6.QtGui import QTextDocument
 
@@ -62,8 +64,7 @@ class QtPackage(QWidget):
         self.is_compiling = False
 
         self.set_connection()
-        self.find_qt_versions()
-        self.find_qt_mingw_compilers()
+        self.scan_qt_path()
 
     def set_connection(self) -> None:
         """
@@ -138,30 +139,42 @@ class QtPackage(QWidget):
         except Exception as e:
             return f"{os.path.basename(compiler_path)} (invalid qmake)"
 
-    def find_qt_mingw_compilers(self, path: str = None) -> dict:
+    def scan_qt_path(self, folder: str = "C:\\Qt") -> None:
+        """
+        Scan the specified folder for Qt installations.
+        """
+        print(f"Scanning: {folder}")
+        self.ui.qt_package_settings.env_button.setDisabled(True)
+        self.ui.qt_package_settings.env_button.setText("Scanning...")
+        QApplication.processEvents()
+        thread = threading.Thread(target=self.scan_qt_path_worker, args=(folder,))
+        thread.start()
+
+    def scan_qt_path_worker(self, folder) -> None:
+        """
+        Worker thread for scanning the Qt installation path.
+        """
+        qt_versions = self.find_qt_versions(folder)
+        qt_mingw = self.find_qt_mingw_compilers(folder)
+
+        QApplication.instance().postEvent(
+            self, ScanFinishedEvent(qt_versions, qt_mingw)
+        )
+
+    def find_qt_mingw_compilers(self, path: str) -> dict:
         """
         Scan the Tools directory under the selected Qt root for all MinGW compilers,
         populate the env_combo_box, and save the mapping:
-        self.qt_mingw: { "display_name": qmake_path }
+        qt_mingw: { "display_name": qmake_path }
         """
 
-        self.qt_mingw = {}  # Clear previous mapping
-        self.ui.qt_package_settings.env_qt_mingw_combo_box.clear()
+        qt_mingw = {}
 
-        if not path:
-            qt_root = "C:\\Qt"
-        else:
-            qt_root = path
-
-        qt_root = Path(qt_root)
-        tools_dir = qt_root / "Tools"
+        path = Path(path)
+        tools_dir = path / "Tools"
         if not tools_dir.exists():
-            self.ui.qt_package_settings.env_qt_mingw_combo_box.setPlaceholderText(
-                "No MinGW found"
-            )
-            return
+            return qt_mingw
 
-        # 遍历 Tools 下所有 mingw* 目录（32-bit 和 64-bit）
         for mingw_dir in tools_dir.glob("mingw*"):
             bin_dir = mingw_dir / "bin"
             gpp_path = bin_dir / "g++.exe"
@@ -170,37 +183,24 @@ class QtPackage(QWidget):
             if gpp_path.exists() and make_path.exists():
                 arch = "64-bit" if "64" in mingw_dir.name else "32-bit"
                 display_name = f"{mingw_dir.name} ({arch})"
-                self.qt_mingw[display_name] = str(bin_dir)
-                self.ui.qt_package_settings.env_qt_mingw_combo_box.addItem(display_name)
+                qt_mingw[display_name] = str(bin_dir)
 
-        if not self.qt_mingw:
-            self.ui.qt_package_settings.env_qt_mingw_combo_box.setPlaceholderText(
-                "No MinGW found"
-            )
+        return qt_mingw
 
-    def find_qt_versions(self, path: str = None) -> None:
+    def find_qt_versions(self, path: str) -> None:
         """
         Scan the Qt installation directory and populate the env_combo_box,
         while saving the dictionary mapping:
-        self.qt_dict: { "display_name": compiler_path }
+        qt_dict: { "display_name": compiler_path }
         """
-        self.qt_compiler = {}  # Clear the dictionary
-        self.ui.qt_package_settings.env_qt_version_combo_box.clear()
+        qt_compiler = {}
 
-        if not path:
-            qt_root = "C:\\Qt"
-        else:
-            qt_root = path
+        path = Path(path)
+        if not path.exists():
+            return qt_compiler
 
-        qt_root = Path(qt_root)
-        if not qt_root.exists():
-            self.ui.qt_package_settings.env_qt_version_combo_box.setPlaceholderText(
-                "No Qt version found"
-            )
-            return
-
-        for version in os.listdir(qt_root):
-            version_path = os.path.join(qt_root, version)
+        for version in os.listdir(path):
+            version_path = os.path.join(path, version)
             if os.path.isdir(version_path) and version[0].isdigit():
                 for compiler in os.listdir(version_path):
                     compiler_path = os.path.join(version_path, compiler)
@@ -209,15 +209,27 @@ class QtPackage(QWidget):
                     ):
                         display_name = self.get_qt_info(compiler_path)
                         qmake_path = os.path.join(compiler_path, "bin")
-                        self.qt_compiler[display_name] = qmake_path
-                        self.ui.qt_package_settings.env_qt_version_combo_box.addItem(
-                            display_name
-                        )
+                        qt_compiler[display_name] = qmake_path
 
-        if not self.qt_compiler:
-            self.ui.qt_package_settings.env_qt_version_combo_box.setPlaceholderText(
-                "No Qt version found"
-            )
+        return qt_compiler
+
+    def refresh_qt_version_combobox(self, qt_versions, qt_mingw) -> None:
+        """
+        Refresh the Qt version and MinGW combo boxes.
+        """
+        self.qt_compiler = qt_versions
+        self.qt_mingw = qt_mingw
+
+        self.ui.qt_package_settings.env_qt_version_combo_box.clear()
+        for display_name, path in qt_versions.items():
+            self.ui.qt_package_settings.env_qt_version_combo_box.addItem(display_name)
+
+        self.ui.qt_package_settings.env_qt_mingw_combo_box.clear()
+        for display_name, path in qt_mingw.items():
+            self.ui.qt_package_settings.env_qt_mingw_combo_box.addItem(display_name)
+
+        self.ui.qt_package_settings.env_button.setDisabled(False)
+        self.ui.qt_package_settings.env_button.setText("Browse...")
 
     @pyqtSlot()
     def select_qt_folder(self) -> None:
@@ -231,8 +243,7 @@ class QtPackage(QWidget):
             QFileDialog.Option.ShowDirsOnly,
         )
         if folder:
-            print(f"User selected: {folder}")
-            self.find_qt_versions(folder)
+            self.scan_qt_path(folder)
 
     @pyqtSlot()
     def select_qt_project_file(self) -> None:
@@ -560,6 +571,24 @@ class QtPackage(QWidget):
         doc = QTextDocument()
         doc.setHtml(html)
         return doc.toPlainText()
+
+    def event(self, e):
+        """
+        Handle custom events.
+        """
+        if e.type() == ScanFinishedEvent.EVENT_TYPE:
+            self.refresh_qt_version_combobox(e.qt_versions, e.qt_mingw)
+            return True
+        return super().event(e)
+
+
+class ScanFinishedEvent(QEvent):
+    EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
+
+    def __init__(self, qt_versions, qt_mingw):
+        super().__init__(ScanFinishedEvent.EVENT_TYPE)
+        self.qt_versions = qt_versions
+        self.qt_mingw = qt_mingw
 
 
 if __name__ == "__main__":

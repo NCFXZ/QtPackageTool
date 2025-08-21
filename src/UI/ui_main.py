@@ -16,7 +16,6 @@
 
 import os
 import sys
-from pathlib import Path
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
@@ -63,7 +62,7 @@ class MainUI(FluentWindow):
 
         self.qt_package_settings = QtPackageSettingsUI()
         self.qt_package_project = QtPackageProjectUI()
-        self.about_ui = AboutUI("0.7.0 Beta", "2025/8/21")
+        self.about_ui = AboutUI("0.7.1 Beta", "2025/8/21")
 
         self.addSubInterface(
             self.qt_package_settings,

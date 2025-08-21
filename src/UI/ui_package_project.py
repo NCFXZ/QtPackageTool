@@ -70,7 +70,7 @@ class QtPackageProjectUI(QWidget):
         self.package_terminal.setFont(QFont("Consolas", 10))
         self.package_terminal.setMinimumHeight(400)
         self.package_terminal.setText(
-            "Terminal Outputs...\nClick the button to start packaging..."
+            'Terminal Outputs...\nClick the "Start Packaging" button to start packaging...'
         )
 
         self.package_toggle_button = PushButton(FIF.PLAY, "Start Packaging", self)
