@@ -99,7 +99,7 @@ class QtPackageProjectUI(QWidget):
         layout.addWidget(package_card_widget)
         layout.addStretch(1)
         layout.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
+            ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN
         )
 
         scroll_area.setWidget(scroll_widget)

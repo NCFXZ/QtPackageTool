@@ -91,7 +91,9 @@ class AboutUI(QWidget):
         sys_info_label_layout.addStretch(1)
 
         sys_info_icon = QLabel(self)
-        pixmap = QPixmap(self.get_resource_path("resource", "images", "logo.png"))
+        relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
+        pixmap = QPixmap(logo_path)
         pixmap = pixmap.scaled(
             QSize(ls.LARGE_ICON_SIZE, ls.LARGE_ICON_SIZE),
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -132,19 +134,6 @@ class AboutUI(QWidget):
         self.main_layout.addWidget(scroll_area)
 
         self.setStyleSheet(ls.STYLE_SHEET)
-
-    def get_resource_path(self, *relative_path_parts) -> str:
-        """
-        Get absolute path to a resource file, works in both source and executable.
-        Base path is three levels above the current file (project root).
-        """
-        if getattr(sys, "frozen", False):
-            # Running in a bundled environment
-            base_path = Path(sys.executable)
-        else:
-            # Running in source, go up three levels
-            base_path = Path(__file__).resolve().parent.parent.parent
-        return str(base_path.joinpath(*relative_path_parts).resolve())
 
 
 if __name__ == "__main__":

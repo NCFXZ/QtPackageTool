@@ -18,10 +18,11 @@
 import os
 import sys
 import subprocess
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
-from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget
+from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget, QTableWidgetItem
 from PyQt6.QtGui import QTextDocument
 
 from qfluentwidgets import FluentIcon as FIF
@@ -71,9 +72,9 @@ class QtPackage(QWidget):
         self.emit_operation_status.connect(self.info_bar)
 
         # Qt Packager Settings UI
-        self.ui.qt_package_settings.env_button.clicked.connect(self.browse_qt_folder)
+        self.ui.qt_package_settings.env_button.clicked.connect(self.select_qt_folder)
         self.ui.qt_package_settings.project_button.clicked.connect(
-            self.browse_project_file
+            self.select_qt_project_file
         )
         self.ui.qt_package_settings.env_qt_version_combo_box.currentTextChanged.connect(
             self.qt_compiler_selection_changed
@@ -90,6 +91,15 @@ class QtPackage(QWidget):
         )
         self.ui.qt_package_project.package_folder_button.clicked.connect(
             self.open_build_folder
+        )
+        self.ui.qt_package_settings.external_file_button.clicked.connect(
+            self.include_external_files
+        )
+        self.ui.qt_package_settings.external_folder_button.clicked.connect(
+            self.include_external_folder
+        )
+        self.ui.qt_package_settings.external_delete_button.clicked.connect(
+            self.delete_selected_rows
         )
 
         # Compiler
@@ -210,12 +220,12 @@ class QtPackage(QWidget):
             )
 
     @pyqtSlot()
-    def browse_qt_folder(self) -> None:
+    def select_qt_folder(self) -> None:
         """
         Open a file dialog to select the Qt installation folder.
         """
         folder = QFileDialog.getExistingDirectory(
-            self,
+            self.ui,
             "Select Qt Installation Folder",
             "",
             QFileDialog.Option.ShowDirsOnly,
@@ -225,12 +235,12 @@ class QtPackage(QWidget):
             self.find_qt_versions(folder)
 
     @pyqtSlot()
-    def browse_project_file(self) -> None:
+    def select_qt_project_file(self) -> None:
         """
         Open a file dialog to select a Qt project file (.pro).
         """
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
+            self.ui,
             "Select Qt Project File",
             "",
             "Qt Project Files (*.pro)",
@@ -266,7 +276,7 @@ class QtPackage(QWidget):
         Open a dialog for the user to select a project output directory.
         """
         dir_path = QFileDialog.getExistingDirectory(
-            self,
+            self.ui,
             "Select Project Output Directory",
             "",
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
@@ -332,6 +342,7 @@ class QtPackage(QWidget):
                     self.compiler_path,
                     self.mingw_path,
                     self.qt_project_output_path,
+                    self.extract_table_data(),
                     self.ui.qt_package_settings.build_combo_box.currentText()
                     == "Release",
                     self.ui.qt_package_settings.clean_switch.isChecked(),
@@ -361,7 +372,12 @@ class QtPackage(QWidget):
         """
         Handle normal output messages.
         """
-        self.ui.qt_package_project.package_terminal.append(text)
+        if re.search(r"error", text, re.IGNORECASE):
+            self.ui.qt_package_project.package_terminal.append(
+                f'<span style="color:red; font-weight:bold;">[Error] {text}</span>'
+            )
+        else:
+            self.ui.qt_package_project.package_terminal.append(text)
 
     @pyqtSlot(Path)
     def handle_finished(self, build_dir: Path) -> None:
@@ -411,6 +427,90 @@ class QtPackage(QWidget):
             self.emit_operation_status.emit(
                 0, f"Build folder does not exist: {self.build_path}", 2000
             )
+
+    @pyqtSlot()
+    def include_external_folder(self) -> None:
+        """
+        Include an external folder.
+        """
+        folder_path = QFileDialog.getExistingDirectory(self.ui, "Select a Folder")
+        if folder_path:
+            self.add_path_to_table(folder_path)
+
+    @pyqtSlot()
+    def include_external_files(self) -> None:
+        """
+        Include external files.
+        """
+        file_paths, _ = QFileDialog.getOpenFileNames(self.ui, "Select Files")
+        if file_paths:
+            for file_path in file_paths:
+                self.add_path_to_table(file_path)
+
+    def add_path_to_table(self, path: str) -> None:
+        """
+        Add a file or folder path to the external resources table.
+        """
+        if not path:
+            self.emit_operation_status.emit(0, "Invalid path", 2000)
+            return
+
+        if os.path.isfile(path) or os.path.isdir(path):
+            # Destination Path = / + basename
+            dest_path = "/" + os.path.basename(path)
+        else:
+            # Invalid path
+            self.emit_operation_status.emit(0, "Invalid path", 2000)
+            return
+
+        # Add a new row
+        row = self.ui.qt_package_settings.external_table.rowCount()
+        self.ui.qt_package_settings.external_table.insertRow(row)
+
+        # Source Path
+        src_item = QTableWidgetItem(path)
+        src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ui.qt_package_settings.external_table.setItem(row, 0, src_item)
+
+        # Destination Path
+        dest_item = QTableWidgetItem(dest_path)
+        dest_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ui.qt_package_settings.external_table.setItem(row, 1, dest_item)
+
+    def delete_selected_rows(self) -> None:
+        """
+        Delete selected rows from the QTableWidget.
+        """
+        # Get selected row indexes
+        selected_rows = set(
+            index.row()
+            for index in self.ui.qt_package_settings.external_table.selectedIndexes()
+        )
+
+        # Delete from bottom to top to avoid index shifting
+        for row in sorted(selected_rows, reverse=True):
+            self.ui.qt_package_settings.external_table.removeRow(row)
+
+    def extract_table_data(self) -> list[dict]:
+        """
+        Extract data from the QTableWidget and return it as a list of dictionaries.
+        """
+        data = []
+        row_count = self.ui.qt_package_settings.external_table.rowCount()
+        col_count = self.ui.qt_package_settings.external_table.columnCount()
+        headers = [
+            self.ui.qt_package_settings.external_table.horizontalHeaderItem(i).text()
+            for i in range(col_count)
+        ]
+
+        for row in range(row_count):
+            row_data = {}
+            for col in range(col_count):
+                item = self.ui.qt_package_settings.external_table.item(row, col)
+                row_data[headers[col]] = item.text() if item else ""
+            data.append(row_data)
+
+        return data
 
     @pyqtSlot(int, str, int)
     def info_bar(self, state: int, message: str, time: int = 2000):

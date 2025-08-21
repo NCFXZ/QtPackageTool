@@ -16,6 +16,7 @@
 
 import os
 import glob
+import shutil
 from pathlib import Path
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QProcessEnvironment
 
@@ -33,6 +34,15 @@ class QtCompiler(QObject):
         self.process = QProcess(self)
         self._make_started = False
         self._deploy_started = False
+        self._copy_sources_started = False
+
+        self.output_path = ""
+        self.qt_bin = ""
+        self.mingw_bin = ""
+        self.project_file = ""
+        self.external_sources = []
+        self.is_release = False
+        self.need_clean = False
 
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
         self.process.readyReadStandardError.connect(self.handle_stderr)
@@ -44,6 +54,7 @@ class QtCompiler(QObject):
         qt_bin: str,
         mingw_bin: str,
         output_path: str,
+        external_sources: list[dict],
         is_release: bool,
         need_clean: bool,
     ) -> None:
@@ -65,8 +76,17 @@ class QtCompiler(QObject):
         self.qt_bin = qt_bin
         self.mingw_bin = mingw_bin
         self.project_file = project_file
+        self.external_sources = external_sources
         self.is_release = is_release
         self.need_clean = need_clean
+
+        print(f"Compiling project: {project_file}")
+        print(f"Output path: {output_path}")
+        print(f"Qt binaries path: {qt_bin}")
+        print(f"MinGW binaries path: {mingw_bin}")
+        print(f"External sources: {external_sources}")
+        print(f"Is release build: {is_release}")
+        print(f"Need clean build: {need_clean}")
 
         # Step 1: qmake
         config_type = "release" if is_release else "debug"
@@ -119,6 +139,7 @@ class QtCompiler(QObject):
                 make_tool = os.path.join(self.mingw_bin, "mingw32-make.exe")
                 self.output_signal.emit("Running make...\n")
                 self.process.start(make_tool)
+
             elif not self._deploy_started:
                 # Step 2: make finished, start windeployqt
                 self._deploy_started = True
@@ -134,6 +155,15 @@ class QtCompiler(QObject):
 
                 self.output_signal.emit("Running windeployqt...\n")
                 self.process.start(windeploy_exe, [exe_path])
+
+            elif not self._copy_sources_started and self.external_sources:
+                # Step 3: Copy sources
+                self._copy_sources_started = True
+                self.output_signal.emit("Copying external sources...\n")
+                config_dir = "release" if self.is_release else "debug"
+                build_dir = Path(self.output_path) / config_dir
+                self.copy_sources_to_output(self.external_sources, build_dir)
+
             else:
                 config_dir = "release" if self.is_release else "debug"
                 build_dir = Path(self.output_path) / config_dir
@@ -143,6 +173,7 @@ class QtCompiler(QObject):
                     self.clean_build_files()
                 self._make_started = False
                 self._deploy_started = False
+                self._copy_sources_started = False
 
                 self.output_signal.emit(
                     '<span style="color:green; font-weight:bold;">Build & Deploy finished!</span>'
@@ -151,10 +182,43 @@ class QtCompiler(QObject):
         else:
             self._make_started = False
             self._deploy_started = False
+            self._copy_sources_started = False
 
             self.error_signal.emit(
                 f"Process exited abnormally, code: {self.process.exitCode()}"
             )
+
+    def copy_sources_to_output(self, external_source, output_dir: str) -> None:
+        """
+        Copy source files and folders to the output directory based on the external source.
+        """
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        for entry in external_source:
+            src = entry.get("Source Path (Local File / Folder)")
+            dest_rel = entry.get("Destination Path (In Package)")
+            if not src or not dest_rel:
+                self.output_signal.emit(f"Invalid entry, skipping: {entry}")
+                continue
+
+            dest = os.path.join(output_dir, dest_rel.lstrip("/"))
+
+            try:
+                if os.path.isfile(src):
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.copy2(src, dest)
+                    self.output_signal.emit(f"Copied {src} -> {dest}")
+                elif os.path.isdir(src):
+                    shutil.copytree(src, dest, dirs_exist_ok=True)
+                    self.output_signal.emit(f"Copied {src} -> {dest}")
+
+            except Exception as e:
+                self.output_signal.emit(
+                    f'<span style="color:red; font-weight:bold;">Failed to copy {src} -> {dest}: {e}</span>'
+                )
+
+        self.process_finished()  # Trigger the next step after copying sources
 
     def clean_build_files(self) -> None:
         """

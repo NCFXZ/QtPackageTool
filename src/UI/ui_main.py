@@ -51,9 +51,9 @@ class MainUI(FluentWindow):
         """
 
         self.setWindowTitle("Qt Package Tool")
-        self.setWindowIcon(
-            QIcon(self.get_resource_path("resource", "images", "logo.png"))
-        )
+        relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
+        self.setWindowIcon(QIcon(logo_path))
         self.setMinimumSize(1200, 800)
         screen = QApplication.primaryScreen().availableGeometry()
         window_geometry = self.frameGeometry()
@@ -63,46 +63,33 @@ class MainUI(FluentWindow):
 
         self.qt_package_settings = QtPackageSettingsUI()
         self.qt_package_project = QtPackageProjectUI()
-        self.about_ui = AboutUI("0.7.0", "2025/8/20")
+        self.about_ui = AboutUI("0.7.0 Beta", "2025/8/21")
 
         self.addSubInterface(
             self.qt_package_settings,
             FIF.SETTING,
             "Environment & Project Settings",
             position=NavigationItemPosition.TOP,
-            isTransparent=True,
+            isTransparent=False,
         )
         self.addSubInterface(
             self.qt_package_project,
             FIF.APPLICATION,
             "Package Project",
             position=NavigationItemPosition.TOP,
-            isTransparent=True,
+            isTransparent=False,
         )
         self.addSubInterface(
             self.about_ui,
             FIF.INFO,
             "About",
             position=NavigationItemPosition.BOTTOM,
-            isTransparent=True,
+            isTransparent=False,
         )
 
         if sys.platform in ["win32"]:
             setThemeColor(getSystemAccentColor(), save=False)
             setTheme(Theme.AUTO)
-
-    def get_resource_path(self, *relative_path_parts) -> str:
-        """
-        Get absolute path to a resource file, works in both source and executable.
-        Base path is three levels above the current file (project root).
-        """
-        if getattr(sys, "frozen", False):
-            # If the application is frozen (packaged), use the executable's directory
-            base_path = Path(sys.executable)
-        else:
-            # If running in source, go up three levels
-            base_path = Path(__file__).resolve().parent.parent.parent
-        return str(base_path.joinpath(*relative_path_parts).resolve())
 
 
 if __name__ == "__main__":

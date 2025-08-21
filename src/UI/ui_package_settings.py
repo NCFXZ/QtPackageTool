@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QApplication,
+    QHeaderView,
 )
 from PyQt6.QtCore import QSize
 from qfluentwidgets import (
@@ -37,6 +38,7 @@ from qfluentwidgets import (
     SwitchButton,
     SmoothScrollArea,
     HyperlinkButton,
+    TableWidget,
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -256,6 +258,69 @@ class QtPackageSettingsUI(QWidget):
             ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
         )
 
+        # External Files & Dependencies
+        external_dependencies_label = StrongBodyLabel(
+            "External Files & Dependencies", self
+        )
+
+        # External Files
+        external_card_widget = CardWidget()
+        external_layout = QVBoxLayout(external_card_widget)
+
+        external_label_group_layout = QVBoxLayout()
+
+        external_title = BodyLabel("Include External Files / Folders", self)
+        external_description = CaptionLabel(
+            "Copy selected files or folders into the package directory", self
+        )
+        external_label_group_layout.addWidget(external_title)
+        external_label_group_layout.addWidget(external_description)
+
+        external_icon = TransparentToolButton(FIF.COPY, self)
+        external_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
+        external_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
+
+        external_banner_layout = QHBoxLayout()
+        external_banner_layout.addWidget(external_icon)
+        external_banner_layout.addSpacing(ls.SMALL_MARGIN)
+        external_banner_layout.addLayout(external_label_group_layout)
+        external_banner_layout.addStretch(1)
+
+        self.external_table = TableWidget(self)
+        self.external_table.setBorderVisible(True)
+        self.external_table.setBorderRadius(8)
+        self.external_table.setFixedHeight(200)
+        self.external_table.setColumnCount(2)
+        self.external_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.external_table.setHorizontalHeaderLabels(
+            ["Source Path (Local File / Folder)", "Destination Path (In Package)"]
+        )
+
+        self.external_file_button = PushButton(FIF.DOCUMENT, "Select File", self)
+        self.external_folder_button = PushButton(FIF.FOLDER, "Select Folder", self)
+        self.external_delete_button = PushButton(FIF.DELETE, "Delete", self)
+
+        external_button_layout = QHBoxLayout()
+        external_button_layout.addStretch(1)
+        external_button_layout.addWidget(self.external_file_button)
+        external_button_layout.addSpacing(ls.SMALL_MARGIN)
+        external_button_layout.addWidget(self.external_folder_button)
+        external_button_layout.addSpacing(ls.SMALL_MARGIN)
+        external_button_layout.addWidget(self.external_delete_button)
+        external_button_layout.addStretch(1)
+
+        external_layout.addLayout(external_banner_layout)
+        external_layout.addSpacing(ls.NANO_MARGIN)
+        external_layout.addWidget(self.external_table)
+        external_layout.addSpacing(ls.NANO_MARGIN)
+        external_layout.addLayout(external_button_layout)
+
+        external_card_widget.setContentsMargins(
+            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
+        )
+
         # Main Layout
         layout.addWidget(main_label)
         layout.addSpacing(ls.MEDIUM_MARGIN)
@@ -268,6 +333,9 @@ class QtPackageSettingsUI(QWidget):
         layout.addWidget(output_path_card_widget)
         layout.addWidget(build_card_widget)
         layout.addWidget(clean_card_widget)
+        layout.addSpacing(ls.SMALL_MARGIN)
+        layout.addWidget(external_dependencies_label)
+        layout.addWidget(external_card_widget)
         layout.addStretch(1)
         layout.setContentsMargins(
             ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN
