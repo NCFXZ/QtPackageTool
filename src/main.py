@@ -21,7 +21,8 @@ import subprocess
 import re
 import threading
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from loguru import logger
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QEvent
 from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget, QTableWidgetItem
@@ -41,6 +42,46 @@ from UI.ui_main import MainUI
 from compiler import QtCompiler
 
 
+# Logger
+if getattr(sys, "frozen", False):
+    log_filename = os.path.join(
+        os.path.dirname(__file__), os.path.join("resource", "log", "app.log")
+    )
+else:
+    log_filename = os.path.join(
+        os.path.dirname(__file__), os.path.join("..", "resource", "log", "app.log")
+    )
+log_path = os.path.dirname(log_filename)
+os.makedirs(log_path, exist_ok=True)
+logger.remove()
+logger.add(
+    log_filename,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}.{function}:{line} - {message}",
+    rotation="10 MB",
+    retention="7 days",
+    backtrace=True,
+    diagnose=True,
+)
+try:
+    logger.add(
+        sys.stdout,
+        level="INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}.{function}:{line} - {message}",
+        backtrace=True,
+        diagnose=True,
+    )
+except Exception as e:
+    logger.error(f"Error adding logger: {e}")
+
+
+def exception_handler(exc_type, exc_value, exc_traceback):
+    logger.error(f"Unhandled exception: {exc_type, exc_value, exc_traceback.tb_frame}")
+
+
+sys.excepthook = exception_handler
+
+
 class QtPackage(QWidget):
     emit_operation_status = pyqtSignal(int, str, int)
 
@@ -48,6 +89,8 @@ class QtPackage(QWidget):
         """
         Initialize the QtPackage class.
         """
+        logger.info("Program started")
+
         super().__init__()
 
         self.ui = MainUI()
@@ -65,6 +108,8 @@ class QtPackage(QWidget):
 
         self.set_connection()
         self.scan_qt_path()
+
+        logger.info("Program initialized")
 
     def set_connection(self) -> None:
         """
@@ -108,6 +153,8 @@ class QtPackage(QWidget):
         self.compiler.finished_signal.connect(self.handle_finished)
         self.compiler.error_signal.connect(self.handle_error)
 
+        logger.info("Connections established")
+
     def is_qt_compiler_dir(self, path: str) -> bool:
         """
         Check if the given path is a valid Qt compiler directory.
@@ -135,22 +182,24 @@ class QtPackage(QWidget):
             qt_line = next((line for line in lines if "Using Qt version" in line), "")
             qt_version = qt_line.split(" ")[3] if qt_line else "Unknown"
             compiler_name = os.path.basename(compiler_path)
+            logger.info(f"Detected Qt version: {qt_version} in {compiler_name}")
             return f"Qt {qt_version} ({compiler_name})"
         except Exception as e:
+            logger.warning(f"Invalid Qt info: {e}")
             return f"{os.path.basename(compiler_path)} (invalid qmake)"
 
     def scan_qt_path(self, folder: str = "C:\\Qt") -> None:
         """
         Scan the specified folder for Qt installations.
         """
-        print(f"Scanning: {folder}")
+        logger.info(f"Scanning: {folder}")
         self.ui.qt_package_settings.env_button.setDisabled(True)
         self.ui.qt_package_settings.env_button.setText("Scanning...")
         QApplication.processEvents()
-        thread = threading.Thread(target=self.scan_qt_path_worker, args=(folder,))
+        thread = threading.Thread(target=self.scan_qt_path_thread, args=(folder,))
         thread.start()
 
-    def scan_qt_path_worker(self, folder) -> None:
+    def scan_qt_path_thread(self, folder) -> None:
         """
         Worker thread for scanning the Qt installation path.
         """
@@ -167,50 +216,75 @@ class QtPackage(QWidget):
         populate the env_combo_box, and save the mapping:
         qt_mingw: { "display_name": qmake_path }
         """
-
         qt_mingw = {}
-
-        path = Path(path)
-        tools_dir = path / "Tools"
-        if not tools_dir.exists():
+        tools_dir = Path(path) / "Tools"
+        if not tools_dir.is_dir():
             return qt_mingw
 
-        for mingw_dir in tools_dir.glob("mingw*"):
+        mingw_dirs = [
+            d
+            for d in tools_dir.iterdir()
+            if d.is_dir() and d.name.lower().startswith("mingw")
+        ]
+
+        def check_mingw(mingw_dir: Path):
             bin_dir = mingw_dir / "bin"
             gpp_path = bin_dir / "g++.exe"
             make_path = bin_dir / "mingw32-make.exe"
 
-            if gpp_path.exists() and make_path.exists():
+            if gpp_path.is_file() and make_path.is_file():
                 arch = "64-bit" if "64" in mingw_dir.name else "32-bit"
                 display_name = f"{mingw_dir.name} ({arch})"
-                qt_mingw[display_name] = str(bin_dir)
+                return display_name, str(bin_dir)
+            return None
 
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(check_mingw, d) for d in mingw_dirs]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    display_name, bin_dir = result
+                    qt_mingw[display_name] = bin_dir
+
+        logger.info(f"Detected MinGW compilers: {qt_mingw}")
         return qt_mingw
 
-    def find_qt_versions(self, path: str) -> None:
+    def find_qt_versions(self, path: str) -> dict:
         """
         Scan the Qt installation directory and populate the env_combo_box,
         while saving the dictionary mapping:
         qt_dict: { "display_name": compiler_path }
         """
         qt_compiler = {}
-
         path = Path(path)
-        if not path.exists():
+        if not path.is_dir():
             return qt_compiler
 
+        candidates = []
         for version in os.listdir(path):
-            version_path = os.path.join(path, version)
-            if os.path.isdir(version_path) and version[0].isdigit():
+            version_path = path / version
+            if version_path.is_dir() and version[0].isdigit():
                 for compiler in os.listdir(version_path):
-                    compiler_path = os.path.join(version_path, compiler)
-                    if os.path.isdir(compiler_path) and self.is_qt_compiler_dir(
-                        compiler_path
-                    ):
-                        display_name = self.get_qt_info(compiler_path)
-                        qmake_path = os.path.join(compiler_path, "bin")
-                        qt_compiler[display_name] = qmake_path
+                    compiler_path = version_path / compiler
+                    if compiler_path.is_dir():
+                        candidates.append(compiler_path)
 
+        def check_compiler(compiler_path: Path):
+            if self.is_qt_compiler_dir(compiler_path):
+                display_name = self.get_qt_info(compiler_path)
+                qmake_path = compiler_path / "bin"
+                return display_name, str(qmake_path)
+            return None
+
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(check_compiler, c) for c in candidates]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    display_name, qmake_path = result
+                    qt_compiler[display_name] = qmake_path
+
+        logger.info(f"Detected Qt compilers: {qt_compiler}")
         return qt_compiler
 
     def refresh_qt_version_combobox(self, qt_versions, qt_mingw) -> None:
@@ -219,14 +293,26 @@ class QtPackage(QWidget):
         """
         self.qt_compiler = qt_versions
         self.qt_mingw = qt_mingw
-
         self.ui.qt_package_settings.env_qt_version_combo_box.clear()
-        for display_name, path in qt_versions.items():
-            self.ui.qt_package_settings.env_qt_version_combo_box.addItem(display_name)
-
         self.ui.qt_package_settings.env_qt_mingw_combo_box.clear()
-        for display_name, path in qt_mingw.items():
-            self.ui.qt_package_settings.env_qt_mingw_combo_box.addItem(display_name)
+
+        if qt_versions:
+            for display_name, path in qt_versions.items():
+                self.ui.qt_package_settings.env_qt_version_combo_box.addItem(
+                    display_name
+                )
+        else:
+            self.ui.qt_package_settings.env_qt_version_combo_box.setPlaceholderText(
+                "No Qt Found"
+            )
+
+        if qt_mingw:
+            for display_name, path in qt_mingw.items():
+                self.ui.qt_package_settings.env_qt_mingw_combo_box.addItem(display_name)
+        else:
+            self.ui.qt_package_settings.env_qt_mingw_combo_box.setPlaceholderText(
+                "No MinGW Found"
+            )
 
         self.ui.qt_package_settings.env_button.setDisabled(False)
         self.ui.qt_package_settings.env_button.setText("Browse...")
@@ -243,6 +329,7 @@ class QtPackage(QWidget):
             QFileDialog.Option.ShowDirsOnly,
         )
         if folder:
+            logger.info(f"User selected Qt folder: {folder}")
             self.scan_qt_path(folder)
 
     @pyqtSlot()
@@ -256,8 +343,17 @@ class QtPackage(QWidget):
             "",
             "Qt Project Files (*.pro)",
         )
+        if not self.is_english_path(file_path):
+            logger.warning(
+                f"User selected a project file with invalid path characters: {file_path}"
+            )
+            self.emit_operation_status.emit(
+                0, "Invalid Path: Selected path contains invalid characters", 5000
+            )
+            return
+
         if file_path:
-            print(f"User selected project: {file_path}")
+            logger.info(f"User selected project: {file_path}")
             self.ui.qt_package_settings.project_select_edit.setText(file_path)
             self.qt_project_file_path = file_path
 
@@ -268,8 +364,8 @@ class QtPackage(QWidget):
         """
         compiler_path = self.qt_compiler.get(text, None)
         if compiler_path:
+            logger.info(f"User selected Qt compiler path: {compiler_path}")
             self.compiler_path = compiler_path
-            print(f"Selected Qt compiler path: {compiler_path}")
 
     @pyqtSlot(str)
     def qt_mingw_selection_changed(self, text: str) -> None:
@@ -278,8 +374,8 @@ class QtPackage(QWidget):
         """
         mingw_path = self.qt_mingw.get(text, None)
         if mingw_path:
+            logger.info(f"User selected Qt MinGW path: {mingw_path}")
             self.mingw_path = mingw_path
-            print(f"Selected Qt MinGW path: {mingw_path}")
 
     @pyqtSlot()
     def select_output_directory(self) -> None:
@@ -293,12 +389,24 @@ class QtPackage(QWidget):
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
         )
 
+        if not self.is_english_path(dir_path):
+            logger.warning(
+                f"User selected an output directory with invalid path characters: {dir_path}"
+            )
+            self.emit_operation_status.emit(
+                0, "Invalid Path: Selected path contains invalid characters", 5000
+            )
+            return
+
         if dir_path:
-            print(f"Selected output directory: {dir_path}")
+            logger.info(f"User selected output directory: {dir_path}")
             self.ui.qt_package_settings.output_path_edit.setText(dir_path)
             self.qt_project_output_path = dir_path
 
             if os.listdir(dir_path):  # Folder is not empty
+                logger.warning(
+                    f"User selected a non-empty folder as output directory: {dir_path}"
+                )
                 TeachingTip.create(
                     target=self.ui.qt_package_settings.output_path_edit,
                     icon=InfoBarIcon.WARNING,
@@ -309,6 +417,20 @@ class QtPackage(QWidget):
                     duration=5000,
                     parent=self,
                 )
+
+    def is_english_path(self, path: str) -> bool:
+        """
+        Check if the path and its parent directories contain only English characters, numbers, and common symbols.
+        """
+        # Allowed half-width characters: English uppercase and lowercase + numbers + _ / \ : . -
+        allowed_pattern = r"^[A-Za-z0-9_:/\\.-]+$"
+
+        # Convert the path to an absolute path and split it
+        path = Path(path).resolve()
+        for part in path.parts:
+            if not re.match(allowed_pattern, part):
+                return False
+        return True
 
     @pyqtSlot()
     def packaging_toggle(self) -> None:
@@ -345,6 +467,7 @@ class QtPackage(QWidget):
                 return
 
             try:
+                logger.info(f"Starting packaging with {compiler_text}...")
                 self.ui.qt_package_project.package_terminal.append(
                     f"Starting packaging with {compiler_text}..."
                 )
@@ -361,11 +484,13 @@ class QtPackage(QWidget):
                 self.is_compiling = True
 
             except Exception as e:
+                logger.error(f"Error occurred while packaging: {str(e)}")
                 self.ui.qt_package_project.package_terminal.append(
                     f'<span style="color:red; font-weight:bold;">Error: {str(e)}</span>'
                 )
 
         else:
+            logger.info("Stopping packaging process...")
             self.is_compiling = False
             self.compiler.stop_process()
 
@@ -385,7 +510,7 @@ class QtPackage(QWidget):
         """
         if re.search(r"error", text, re.IGNORECASE):
             self.ui.qt_package_project.package_terminal.append(
-                f'<span style="color:red; font-weight:bold;">[Error] {text}</span>'
+                f'<span style="color:orange; font-weight:bold;">[Error] {text}</span>'
             )
         else:
             self.ui.qt_package_project.package_terminal.append(text)
@@ -432,9 +557,10 @@ class QtPackage(QWidget):
         Open the build folder in the file explorer.
         """
         if self.build_path.exists() and self.build_path.is_dir():
+            logger.info(f"Opening build folder: {self.build_path}")
             subprocess.Popen(f'explorer "{self.build_path}"')
         else:
-            print(f"Folder does not exist: {self.build_path}")
+            logger.warning(f"Folder does not exist: {self.build_path}")
             self.emit_operation_status.emit(
                 0, f"Build folder does not exist: {self.build_path}", 2000
             )
@@ -446,6 +572,7 @@ class QtPackage(QWidget):
         """
         folder_path = QFileDialog.getExistingDirectory(self.ui, "Select a Folder")
         if folder_path:
+            logger.info(f"User selected external folder to include: {folder_path}")
             self.add_path_to_table(folder_path)
 
     @pyqtSlot()
@@ -456,6 +583,7 @@ class QtPackage(QWidget):
         file_paths, _ = QFileDialog.getOpenFileNames(self.ui, "Select Files")
         if file_paths:
             for file_path in file_paths:
+                logger.info(f"User selected external file to include: {file_path}")
                 self.add_path_to_table(file_path)
 
     def add_path_to_table(self, path: str) -> None:
@@ -463,6 +591,7 @@ class QtPackage(QWidget):
         Add a file or folder path to the external resources table.
         """
         if not path:
+            logger.warning(f"Invalid path provided for external resources: ({path})")
             self.emit_operation_status.emit(0, "Invalid path", 2000)
             return
 
@@ -471,6 +600,7 @@ class QtPackage(QWidget):
             dest_path = "/" + os.path.basename(path)
         else:
             # Invalid path
+            logger.warning(f"Invalid path provided for external resources: ({path})")
             self.emit_operation_status.emit(0, "Invalid path", 2000)
             return
 
@@ -502,6 +632,8 @@ class QtPackage(QWidget):
         for row in sorted(selected_rows, reverse=True):
             self.ui.qt_package_settings.external_table.removeRow(row)
 
+        logger.info(f"Selected rows deleted: {selected_rows}")
+
     def extract_table_data(self) -> list[dict]:
         """
         Extract data from the QTableWidget and return it as a list of dictionaries.
@@ -521,6 +653,7 @@ class QtPackage(QWidget):
                 row_data[headers[col]] = item.text() if item else ""
             data.append(row_data)
 
+        logger.info(f"Extracted table data: {data}")
         return data
 
     @pyqtSlot(int, str, int)
@@ -596,3 +729,4 @@ if __name__ == "__main__":
     w = QtPackage()
     w.ui.show()
     app.exec()
+    logger.info("Program exited")

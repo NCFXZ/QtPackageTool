@@ -18,6 +18,7 @@ import os
 import glob
 import shutil
 from pathlib import Path
+from loguru import logger
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QProcessEnvironment
 
 
@@ -80,19 +81,17 @@ class QtCompiler(QObject):
         self.is_release = is_release
         self.need_clean = need_clean
 
-        print(f"Compiling project: {project_file}")
-        print(f"Output path: {output_path}")
-        print(f"Qt binaries path: {qt_bin}")
-        print(f"MinGW binaries path: {mingw_bin}")
-        print(f"External sources: {external_sources}")
-        print(f"Is release build: {is_release}")
-        print(f"Need clean build: {need_clean}")
+        logger.info(
+            f"project_file: {project_file}, output_path: {output_path}, qt_bin: {qt_bin}, mingw_bin: {mingw_bin}, external_sources: {external_sources}, is_release: {is_release}, need_clean: {need_clean}"
+        )
 
         # Step 1: qmake
         config_type = "release" if is_release else "debug"
         qmake_exe = os.path.join(qt_bin, "qmake.exe")
         args = [project_file, f"CONFIG+={config_type}"]
 
+        logger.info(f"Running qmake with args: {qmake_exe}, {args}")
+        logger.info(f"Setting working directory: {output_path}")
         self.output_signal.emit("Running qmake...\n")
         self.process.setWorkingDirectory(output_path)
         self.process.start(qmake_exe, args)
@@ -103,6 +102,7 @@ class QtCompiler(QObject):
         """
         data = self.process.readAllStandardOutput()
         text = bytes(data).decode("utf-8")
+        logger.info(f"Compiler output: {text.strip()}")
         self.output_signal.emit(text)
 
     def handle_stderr(self) -> None:
@@ -111,6 +111,7 @@ class QtCompiler(QObject):
         """
         data = self.process.readAllStandardError()
         text = bytes(data).decode("utf-8")
+        logger.error(f"Compiler error: {text.strip()}")
         self.output_signal.emit("[Error] " + text)
 
     def get_exe_name_from_pro(self, project_file: str) -> str:
@@ -126,17 +127,24 @@ class QtCompiler(QObject):
                     parts = line.split("=")
                     if len(parts) > 1:
                         exe_name = parts[1].strip()
+
+        logger.info(f"Executable name derived from .pro file: {exe_name}")
         return exe_name + ".exe"
 
     def process_finished(self) -> None:
         """
         Handle process finished event.
         """
-        if self.process.exitStatus() == QProcess.ExitStatus.NormalExit:
+        exit_code = self.process.exitCode()
+        if (
+            self.process.exitStatus() == QProcess.ExitStatus.NormalExit
+            and exit_code == 0
+        ):
             if not self._make_started:
                 # Step 1: qmake finished, start make
                 self._make_started = True
                 make_tool = os.path.join(self.mingw_bin, "mingw32-make.exe")
+                logger.info(f"Running make tool: {make_tool}")
                 self.output_signal.emit("Running make...\n")
                 self.process.start(make_tool)
 
@@ -144,32 +152,38 @@ class QtCompiler(QObject):
                 # Step 2: make finished, start windeployqt
                 self._deploy_started = True
                 windeploy_exe = os.path.join(self.qt_bin, "windeployqt.exe")
-
                 exe_name = self.get_exe_name_from_pro(self.project_file)
                 config_dir = "release" if self.is_release else "debug"
                 exe_path = os.path.join(self.output_path, config_dir, exe_name)
 
                 if not os.path.exists(exe_path):
+                    logger.error(f"Executable not found: {exe_path}")
                     self.error_signal.emit(f"Executable not found: {exe_path}")
                     return
 
+                logger.info(
+                    f"Running windeployqt with args: {windeploy_exe}, {[exe_path]}"
+                )
                 self.output_signal.emit("Running windeployqt...\n")
                 self.process.start(windeploy_exe, [exe_path])
 
             elif not self._copy_sources_started and self.external_sources:
                 # Step 3: Copy sources
                 self._copy_sources_started = True
-                self.output_signal.emit("Copying external sources...\n")
                 config_dir = "release" if self.is_release else "debug"
                 build_dir = Path(self.output_path) / config_dir
+                logger.info(f"Copying external sources to: {build_dir}")
+                self.output_signal.emit("Copying external sources...\n")
                 self.copy_sources_to_output(self.external_sources, build_dir)
 
             else:
                 config_dir = "release" if self.is_release else "debug"
                 build_dir = Path(self.output_path) / config_dir
+                logger.info(f"Build successful to directory: {build_dir}")
                 self.finished_signal.emit(build_dir)
 
                 if self.need_clean:
+                    logger.info(f"Cleaning build files in: {build_dir}")
                     self.clean_build_files()
                 self._make_started = False
                 self._deploy_started = False
@@ -180,13 +194,23 @@ class QtCompiler(QObject):
                 )
 
         else:
+            if exit_code != 0:
+                if self._make_started:
+                    logger.error(f"Build failed with exit code {exit_code}")
+                    self.error_signal.emit(f"Build failed with exit code {exit_code}")
+                elif self._deploy_started:
+                    logger.error(f"Deployment failed with exit code {exit_code}")
+                    self.error_signal.emit(
+                        f"Deployment failed with exit code {exit_code}"
+                    )
+
+            elif self.process.exitStatus() != QProcess.ExitStatus.NormalExit:
+                logger.error(f"Process exited abnormally, code: {exit_code}")
+                self.error_signal.emit(f"Process exited abnormally, code: {exit_code}")
+
             self._make_started = False
             self._deploy_started = False
             self._copy_sources_started = False
-
-            self.error_signal.emit(
-                f"Process exited abnormally, code: {self.process.exitCode()}"
-            )
 
     def copy_sources_to_output(self, external_source, output_dir: str) -> None:
         """
@@ -198,7 +222,10 @@ class QtCompiler(QObject):
         for entry in external_source:
             src = entry.get("Source Path (Local File / Folder)")
             dest_rel = entry.get("Destination Path (In Package)")
+            logger.info(f"Try to copy {src} to {dest_rel}")
+
             if not src or not dest_rel:
+                logger.warning(f"Invalid entry: {entry}")
                 self.output_signal.emit(f"Invalid entry, skipping: {entry}")
                 continue
 
@@ -208,15 +235,17 @@ class QtCompiler(QObject):
                 if os.path.isfile(src):
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                     shutil.copy2(src, dest)
+                    logger.info(f"Copied {src} -> {dest}")
                     self.output_signal.emit(f"Copied {src} -> {dest}")
                 elif os.path.isdir(src):
                     shutil.copytree(src, dest, dirs_exist_ok=True)
+                    logger.info(f"Copied {src} -> {dest}")
                     self.output_signal.emit(f"Copied {src} -> {dest}")
 
             except Exception as e:
-                self.output_signal.emit(
-                    f'<span style="color:red; font-weight:bold;">Failed to copy {src} -> {dest}: {e}</span>'
-                )
+                logger.error(f"Failed to copy {src} -> {dest}: {e}")
+                self.error_signal.emit(f"Failed to copy {src} -> {dest}: {e}")
+                return
 
         self.process_finished()  # Trigger the next step after copying sources
 
@@ -240,10 +269,12 @@ class QtCompiler(QObject):
                     os.remove(file_path)
                     removed_files += 1
                 except Exception as e:
+                    logger.error(f"Could not delete {file_path}: {e}")
                     self.output_signal.emit(
-                        f'<span style="color:orange; font-weight:bold;">[Warning] Could not delete {file_path}: {e}</span>\n'
+                        f"[Error] Could not delete {file_path}: {e}\n"
                     )
 
+        logger.info(f"Cleaned {removed_files} build artifact files.")
         self.output_signal.emit(f"Cleaned {removed_files} build artifact files.\n")
 
     def stop_process(self) -> None:
@@ -252,6 +283,7 @@ class QtCompiler(QObject):
         """
         if self.process is not None:
             self.process.kill()
+            logger.info("Build process stopped by user.")
             self.error_signal.emit(
                 '<span style="color:red; font-weight:bold;">Build stopped by user</span>'
             )

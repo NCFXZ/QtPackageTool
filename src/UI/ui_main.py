@@ -50,7 +50,12 @@ class MainUI(FluentWindow):
         """
 
         self.setWindowTitle("Qt Package Tool")
-        relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        if getattr(sys, "frozen", False):
+            relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        else:
+            relative_logo_path = os.path.join(
+                "..", "..", "resource", "images", "logo.png"
+            )
         logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
         self.setWindowIcon(QIcon(logo_path))
         self.setMinimumSize(1200, 800)

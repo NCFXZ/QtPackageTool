@@ -89,7 +89,12 @@ class AboutUI(QWidget):
         sys_info_label_layout.addStretch(1)
 
         sys_info_icon = QLabel(self)
-        relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        if getattr(sys, "frozen", False):
+            relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        else:
+            relative_logo_path = os.path.join(
+                "..", "..", "resource", "images", "logo.png"
+            )
         logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
         pixmap = QPixmap(logo_path)
         pixmap = pixmap.scaled(
