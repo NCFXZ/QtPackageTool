@@ -16,6 +16,7 @@
 
 import sys
 import os
+import __main__
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -89,7 +90,7 @@ class AboutUI(QWidget):
         sys_info_label_layout.addStretch(1)
 
         sys_info_icon = QLabel(self)
-        if getattr(sys, "frozen", False):
+        if getattr(__main__, "__compiled__", False):
             relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
         else:
             relative_logo_path = os.path.join(

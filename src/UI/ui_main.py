@@ -16,6 +16,7 @@
 
 import os
 import sys
+import __main__
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
@@ -50,7 +51,7 @@ class MainUI(FluentWindow):
         """
 
         self.setWindowTitle("Qt Package Tool")
-        if getattr(sys, "frozen", False):
+        if getattr(__main__, "__compiled__", False):
             relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
         else:
             relative_logo_path = os.path.join(
@@ -67,7 +68,7 @@ class MainUI(FluentWindow):
 
         self.qt_package_settings = QtPackageSettingsUI()
         self.qt_package_project = QtPackageProjectUI()
-        self.about_ui = AboutUI("0.7.1 Beta", "2025/8/21")
+        self.about_ui = AboutUI("0.7.2 Beta", "2025/8/21")
 
         self.addSubInterface(
             self.qt_package_settings,

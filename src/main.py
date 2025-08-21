@@ -20,6 +20,7 @@ import sys
 import subprocess
 import re
 import threading
+import __main__
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
@@ -43,7 +44,7 @@ from compiler import QtCompiler
 
 
 # Logger
-if getattr(sys, "frozen", False):
+if getattr(__main__, "__compiled__", False):
     log_filename = os.path.join(
         os.path.dirname(__file__), os.path.join("resource", "log", "app.log")
     )
