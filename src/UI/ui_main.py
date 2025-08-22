@@ -68,7 +68,7 @@ class MainUI(FluentWindow):
 
         self.qt_package_settings = QtPackageSettingsUI()
         self.qt_package_project = QtPackageProjectUI()
-        self.about_ui = AboutUI("0.7.2 Beta", "2025/8/21")
+        self.about_ui = AboutUI("0.8.0 Beta", "2025/8/22")
 
         self.addSubInterface(
             self.qt_package_settings,
