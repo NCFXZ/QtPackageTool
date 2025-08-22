@@ -36,12 +36,14 @@ class QtCompiler(QObject):
         self._make_started = False
         self._deploy_started = False
         self._copy_sources_started = False
+        self._qml_dll_deploy_count = 0
 
         self.output_path = ""
         self.qt_bin = ""
         self.mingw_bin = ""
         self.project_file = ""
         self.external_sources = []
+        self._qml_dll_need_deploy_files = []
         self.is_release = False
         self.need_clean = False
 
@@ -73,6 +75,11 @@ class QtCompiler(QObject):
         env["PATH"] += ";" + qt_bin + ";" + mingw_bin
         self.process.setProcessEnvironment(self._dict_to_qt_env(env))
 
+        self._make_started = False
+        self._deploy_started = False
+        self._copy_sources_started = False
+        self._qml_dll_deploy_count = 0
+
         self.output_path = output_path
         self.qt_bin = qt_bin
         self.mingw_bin = mingw_bin
@@ -80,21 +87,32 @@ class QtCompiler(QObject):
         self.external_sources = external_sources
         self.is_release = is_release
         self.need_clean = need_clean
-
         logger.info(
             f"project_file: {project_file}, output_path: {output_path}, qt_bin: {qt_bin}, mingw_bin: {mingw_bin}, external_sources: {external_sources}, is_release: {is_release}, need_clean: {need_clean}"
         )
 
+        # Check whether QML DLL files need to be deployed
+        self._qml_dll_need_deploy_files = []
+        for entry in external_sources:
+            type = entry.get("Type")
+            if type.strip().casefold() == "qml":
+                self._qml_dll_need_deploy_files.append(entry.get("Destination"))
+        logger.info(f"QML deployment required for: {self._qml_dll_need_deploy_files}")
+
         # Step 1: qmake
         config_type = "release" if is_release else "debug"
-        qmake_exe = os.path.join(qt_bin, "qmake.exe")
-        args = [project_file, f"CONFIG+={config_type}"]
+        qmake_exe = (Path(qt_bin) / "qmake.exe").resolve()
+        if not qmake_exe.exists():
+            logger.error(f"qmake not found: {qmake_exe}")
+            self.error_signal.emit(f"qmake not found: {qmake_exe}")
+            return
 
-        logger.info(f"Running qmake with args: {qmake_exe}, {args}")
+        args = [project_file, f"CONFIG+={config_type}"]
         logger.info(f"Setting working directory: {output_path}")
+        logger.info(f"Running: {qmake_exe} {args}")
         self.output_signal.emit("Running qmake...\n")
         self.process.setWorkingDirectory(output_path)
-        self.process.start(qmake_exe, args)
+        self.process.start(str(qmake_exe), args)
 
     def handle_stdout(self) -> None:
         """
@@ -143,51 +161,75 @@ class QtCompiler(QObject):
             if not self._make_started:
                 # Step 1: qmake finished, start make
                 self._make_started = True
-                make_tool = os.path.join(self.mingw_bin, "mingw32-make.exe")
-                logger.info(f"Running make tool: {make_tool}")
+                make_tool = (Path(self.mingw_bin) / "mingw32-make.exe").resolve()
+                if not make_tool.exists():
+                    logger.error(f"Make tool not found: {make_tool}")
+                    self.error_signal.emit(f"Make tool not found: {make_tool}")
+                    return
+
+                logger.info(f"Running: {make_tool}")
                 self.output_signal.emit("Running make...\n")
-                self.process.start(make_tool)
+                self.process.start(str(make_tool))
 
             elif not self._deploy_started:
                 # Step 2: make finished, start windeployqt
                 self._deploy_started = True
-                windeploy_exe = os.path.join(self.qt_bin, "windeployqt.exe")
+                windeploy_exe = (Path(self.qt_bin) / "windeployqt.exe").resolve()
                 exe_name = self.get_exe_name_from_pro(self.project_file)
                 config_dir = "release" if self.is_release else "debug"
-                exe_path = os.path.join(self.output_path, config_dir, exe_name)
+                exe_path = (Path(self.output_path) / config_dir / exe_name).resolve()
 
-                if not os.path.exists(exe_path):
+                if not exe_path.exists():
                     logger.error(f"Executable not found: {exe_path}")
                     self.error_signal.emit(f"Executable not found: {exe_path}")
                     return
 
-                logger.info(
-                    f"Running windeployqt with args: {windeploy_exe}, {[exe_path]}"
-                )
+                logger.info(f"Running: {windeploy_exe} {[exe_path]}")
                 self.output_signal.emit("Running windeployqt...\n")
-                self.process.start(windeploy_exe, [exe_path])
+                self.process.start(str(windeploy_exe), [str(exe_path)])
 
             elif not self._copy_sources_started and self.external_sources:
                 # Step 3: Copy sources
                 self._copy_sources_started = True
                 config_dir = "release" if self.is_release else "debug"
-                build_dir = Path(self.output_path) / config_dir
+                build_dir = (Path(self.output_path) / config_dir).resolve()
                 logger.info(f"Copying external sources to: {build_dir}")
                 self.output_signal.emit("Copying external sources...\n")
-                self.copy_sources_to_output(self.external_sources, build_dir)
+                self.copy_sources_to_output(self.external_sources, str(build_dir))
+
+            elif self._qml_dll_deploy_count < len(self._qml_dll_need_deploy_files):
+                # Step 4: Deploy QML DLLs
+                dll = self._qml_dll_need_deploy_files[self._qml_dll_deploy_count]
+                config_dir = "release" if self.is_release else "debug"
+                dll_path = (
+                    Path(self.output_path) / config_dir / dll.lstrip("/\\")
+                ).resolve()
+                windeploy_exe = os.path.join(self.qt_bin, "windeployqt.exe")
+                qml_path = (Path(self.qt_bin).parent / "qml").resolve()
+
+                if not os.path.exists(windeploy_exe) or not os.path.exists(qml_path):
+                    logger.error(f"Path not found: {windeploy_exe} or {qml_path}")
+                    self.error_signal.emit(
+                        f"Path not found: {windeploy_exe} or {qml_path}"
+                    )
+                    return
+
+                logger.info(f"Running: {windeploy_exe} {dll_path} --qmldir {qml_path}")
+                self.output_signal.emit(f"Deploying QML DLL: {dll_path}\n")
+                self.process.start(
+                    windeploy_exe, [str(dll_path), "--qmldir", str(qml_path)]
+                )
+                self._qml_dll_deploy_count += 1
 
             else:
                 config_dir = "release" if self.is_release else "debug"
-                build_dir = Path(self.output_path) / config_dir
+                build_dir = (Path(self.output_path) / config_dir).resolve()
                 logger.info(f"Build successful to directory: {build_dir}")
                 self.finished_signal.emit(build_dir)
 
                 if self.need_clean:
                     logger.info(f"Cleaning build files in: {build_dir}")
                     self.clean_build_files()
-                self._make_started = False
-                self._deploy_started = False
-                self._copy_sources_started = False
 
                 self.output_signal.emit(
                     '<span style="color:green; font-weight:bold;">Build & Deploy finished!</span>'
@@ -208,10 +250,6 @@ class QtCompiler(QObject):
                 logger.error(f"Process exited abnormally, code: {exit_code}")
                 self.error_signal.emit(f"Process exited abnormally, code: {exit_code}")
 
-            self._make_started = False
-            self._deploy_started = False
-            self._copy_sources_started = False
-
     def copy_sources_to_output(self, external_source, output_dir: str) -> None:
         """
         Copy source files and folders to the output directory based on the external source.
@@ -220,8 +258,8 @@ class QtCompiler(QObject):
             os.makedirs(output_dir)
 
         for entry in external_source:
-            src = entry.get("Source Path (Local File / Folder)")
-            dest_rel = entry.get("Destination Path (In Package)")
+            src = entry.get("Source")
+            dest_rel = entry.get("Destination")
             logger.info(f"Try to copy {src} to {dest_rel}")
 
             if not src or not dest_rel:
@@ -247,6 +285,7 @@ class QtCompiler(QObject):
                 self.error_signal.emit(f"Failed to copy {src} -> {dest}: {e}")
                 return
 
+        logger.info("All external sources copied successfully.")
         self.process_finished()  # Trigger the next step after copying sources
 
     def clean_build_files(self) -> None:

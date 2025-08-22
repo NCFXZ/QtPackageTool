@@ -21,6 +21,7 @@ import subprocess
 import re
 import threading
 import __main__
+import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
@@ -100,6 +101,7 @@ class QtPackage(QWidget):
         self.VALID_COMPILERS = ("mingw", "msvc")
         self.qt_compiler = {}
         self.qt_mingw = {}
+        self.qt_dependencies = {}
         self.compiler_path = ""
         self.mingw_path = ""
         self.build_path: Path = None
@@ -108,6 +110,7 @@ class QtPackage(QWidget):
         self.is_compiling = False
 
         self.set_connection()
+        self.load_qt_dependencies()
         self.scan_qt_path()
 
         logger.info("Program initialized")
@@ -145,8 +148,14 @@ class QtPackage(QWidget):
         self.ui.qt_package_settings.external_folder_button.clicked.connect(
             self.include_external_folder
         )
-        self.ui.qt_package_settings.external_delete_button.clicked.connect(
+        self.ui.qt_package_settings.external_remove_button.clicked.connect(
             self.delete_selected_rows
+        )
+        self.ui.qt_package_settings.dependencies_remove_button.clicked.connect(
+            self.delete_selected_rows
+        )
+        self.ui.qt_package_settings.dependencies_import_button.clicked.connect(
+            self.import_dependencies
         )
 
         # Compiler
@@ -155,6 +164,29 @@ class QtPackage(QWidget):
         self.compiler.error_signal.connect(self.handle_error)
 
         logger.info("Connections established")
+
+    def load_qt_dependencies(self) -> None:
+        """
+        Load the dependencies from the JSON configuration file.
+        """
+        try:
+            if getattr(__main__, "__compiled__", False):
+                config_path = os.path.join(
+                    os.path.dirname(__file__),
+                    os.path.join("resource", "config", "qt_dependencies.json"),
+                )
+            else:
+                config_path = os.path.join(
+                    os.path.dirname(__file__),
+                    os.path.join("..", "resource", "config", "qt_dependencies.json"),
+                )
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                self.qt_dependencies = json.load(f)
+            logger.info(f"Qt dependencies loaded successfully: {self.qt_dependencies}")
+        except Exception as e:
+            logger.error(f"Error loading Qt dependencies: {e}")
+            self.qt_dependencies = {}
 
     def is_qt_compiler_dir(self, path: str) -> bool:
         """
@@ -318,6 +350,26 @@ class QtPackage(QWidget):
         self.ui.qt_package_settings.env_button.setDisabled(False)
         self.ui.qt_package_settings.env_button.setText("Browse...")
 
+    def detect_qt_major_version(self, qt_path: str) -> int:
+        """
+        Return the Qt major version number from a given Qt bin path.
+        Example:
+            C:\\Qt\\5.15.2\\msvc2019_64\\bin  -> 5
+            C:\\Qt\\6.2.4\\msvc2019_64\\bin   -> 6
+        """
+        parts = qt_path.split(os.sep)
+        version_str = None
+        for part in parts:
+            if part[0].isdigit():
+                version_str = part
+                break
+
+        if not version_str:
+            logger.warning(f"Cannot detect Qt version from path: {qt_path}")
+            return -1
+
+        return int(version_str.split(".")[0])
+
     @pyqtSlot()
     def select_qt_folder(self) -> None:
         """
@@ -349,7 +401,7 @@ class QtPackage(QWidget):
                 f"User selected a project file with invalid path characters: {file_path}"
             )
             self.emit_operation_status.emit(
-                0, "Invalid Path: Selected path contains invalid characters", 5000
+                0, "Invalid Path: Selected Path Contains Invalid Characters", 5000
             )
             return
 
@@ -368,6 +420,26 @@ class QtPackage(QWidget):
             logger.info(f"User selected Qt compiler path: {compiler_path}")
             self.compiler_path = compiler_path
 
+            self.ui.qt_package_settings.dependencies_module_combo_box.clear()
+            self.ui.qt_package_settings.dependencies_table.clear()
+            self.ui.qt_package_settings.dependencies_table.setHorizontalHeaderLabels(
+                [
+                    "Module Name",
+                    "Module Type",
+                    "Module DLL",
+                    "Module Path",
+                    "Destination Path",
+                ]
+            )
+            for module_name in self.qt_dependencies.keys():
+                exists, _, _, _, _ = self.validate_qt_module_info(
+                    compiler_path, self.qt_dependencies, module_name
+                )
+                if exists:
+                    self.ui.qt_package_settings.dependencies_module_combo_box.addItem(
+                        module_name
+                    )
+
     @pyqtSlot(str)
     def qt_mingw_selection_changed(self, text: str) -> None:
         """
@@ -377,6 +449,114 @@ class QtPackage(QWidget):
         if mingw_path:
             logger.info(f"User selected Qt MinGW path: {mingw_path}")
             self.mingw_path = mingw_path
+
+    def validate_qt_module_info(
+        self, qt_bin_path: str, qt_config: dict, module_name: str
+    ) -> tuple[bool, str, str, str, str]:
+        """
+        Check if both DLL and path exist for the given module_name based on Qt path and JSON config.
+
+        Args:
+            qt_bin_path: Qt bin directory path
+            qt_config: Loaded JSON as a dictionary
+            module_name: The module key to check
+
+        Returns:
+            True if DLL and path exist, False otherwise.
+        """
+        if module_name not in qt_config:
+            logger.warning(f"Module '{module_name}' not found in config.")
+            return False
+
+        qt_major = self.detect_qt_major_version(qt_bin_path)
+        qt_dir = Path(qt_bin_path).parent.resolve()
+
+        module_config = qt_config[module_name]
+        module_type = module_config.get("type")
+        dll_template = module_config.get("dll")
+        path_template = module_config.get("path", "")
+        dest_path = module_config.get("dest_path", "")
+
+        dll = Path(
+            dll_template.replace("%QTDIR%", str(qt_dir)).replace(
+                "{QT_MAJOR}", str(qt_major)
+            )
+        )
+
+        dll_exists = dll.is_file()
+        if dll_exists:
+            logger.info(f"DLL found: {dll}")
+        else:
+            logger.info(f"Invalid Module {module_name}, DLL not found: {dll}")
+            return False, str(dll), "", ""
+
+        if path_template:
+            path = Path(
+                path_template.replace("%QTDIR%", str(qt_dir)).replace(
+                    "{QT_MAJOR}", str(qt_major)
+                )
+            )
+            path_exists = path.is_dir()
+            if path_exists:
+                logger.info(f"Path found: {path}")
+            else:
+                logger.info(f"Path not found: {path}")
+        else:
+            logger.info(f"No extra directories are needed for this DLL: {dll}")
+            path_exists = True
+            path = ""
+
+        return (
+            dll_exists and path_exists,
+            str(module_type),
+            str(dll),
+            str(path),
+            str(dest_path),
+        )
+
+    @pyqtSlot()
+    def import_dependencies(self) -> None:
+        module_name = (
+            self.ui.qt_package_settings.dependencies_module_combo_box.currentText()
+        )
+
+        exists, type, dll, path, dest_path = self.validate_qt_module_info(
+            self.compiler_path, self.qt_dependencies, module_name
+        )
+        if exists:
+            for row in range(self.ui.qt_package_settings.dependencies_table.rowCount()):
+                item = self.ui.qt_package_settings.dependencies_table.item(row, 0)
+                if item and item.text() == module_name:
+                    logger.info(f"Module '{module_name}' already in the table.")
+                    self.emit_operation_status.emit(
+                        -1,
+                        "Module Already Imported",
+                        2000,
+                    )
+                    return
+
+            row = self.ui.qt_package_settings.dependencies_table.rowCount()
+            self.ui.qt_package_settings.dependencies_table.insertRow(row)
+
+            module = QTableWidgetItem(module_name)
+            module.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.ui.qt_package_settings.dependencies_table.setItem(row, 0, module)
+
+            type_item = QTableWidgetItem(type)
+            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.ui.qt_package_settings.dependencies_table.setItem(row, 1, type_item)
+
+            dll_path = QTableWidgetItem(dll)
+            dll_path.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.ui.qt_package_settings.dependencies_table.setItem(row, 2, dll_path)
+
+            path_item = QTableWidgetItem(path)
+            path_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.ui.qt_package_settings.dependencies_table.setItem(row, 3, path_item)
+
+            dest_item = QTableWidgetItem(dest_path)
+            dest_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.ui.qt_package_settings.dependencies_table.setItem(row, 4, dest_item)
 
     @pyqtSlot()
     def select_output_directory(self) -> None:
@@ -395,7 +575,7 @@ class QtPackage(QWidget):
                 f"User selected an output directory with invalid path characters: {dir_path}"
             )
             self.emit_operation_status.emit(
-                0, "Invalid Path: Selected path contains invalid characters", 5000
+                0, "Invalid Path: Selected Path Contains Invalid Characters", 5000
             )
             return
 
@@ -469,6 +649,15 @@ class QtPackage(QWidget):
 
             try:
                 logger.info(f"Starting packaging with {compiler_text}...")
+                if os.listdir(self.qt_project_output_path):  # Folder is not empty
+                    logger.warning(
+                        f"User selected a non-empty folder as output directory: {self.qt_project_output_path}"
+                    )
+                    self.emit_operation_status.emit(
+                        -1,
+                        "Output Folder Not Empty: To Avoid Packaging Errors, Recommended to Use an Empty Folder",
+                        5000,
+                    )
                 self.ui.qt_package_project.package_terminal.append(
                     f"Starting packaging with {compiler_text}..."
                 )
@@ -531,7 +720,7 @@ class QtPackage(QWidget):
         )
         self.ui.qt_package_settings.setDisabled(self.is_compiling)
         self.ui.qt_package_project.package_folder_button.setDisabled(False)
-        self.emit_operation_status.emit(1, "Build & Deploy finished", 2000)
+        self.emit_operation_status.emit(1, "Build & Deploy Finished", 2000)
 
     @pyqtSlot(str)
     def handle_error(self, msg: str) -> None:
@@ -563,7 +752,7 @@ class QtPackage(QWidget):
         else:
             logger.warning(f"Folder does not exist: {self.build_path}")
             self.emit_operation_status.emit(
-                0, f"Build folder does not exist: {self.build_path}", 2000
+                0, f"Build Folder Does Not Exist: {self.build_path}", 2000
             )
 
     @pyqtSlot()
@@ -574,7 +763,7 @@ class QtPackage(QWidget):
         folder_path = QFileDialog.getExistingDirectory(self.ui, "Select a Folder")
         if folder_path:
             logger.info(f"User selected external folder to include: {folder_path}")
-            self.add_path_to_table(folder_path)
+            self.add_external_path_to_table(folder_path)
 
     @pyqtSlot()
     def include_external_files(self) -> None:
@@ -585,16 +774,27 @@ class QtPackage(QWidget):
         if file_paths:
             for file_path in file_paths:
                 logger.info(f"User selected external file to include: {file_path}")
-                self.add_path_to_table(file_path)
+                self.add_external_path_to_table(file_path)
 
-    def add_path_to_table(self, path: str) -> None:
+    def add_external_path_to_table(self, path: str) -> None:
         """
         Add a file or folder path to the external resources table.
         """
         if not path:
             logger.warning(f"Invalid path provided for external resources: ({path})")
-            self.emit_operation_status.emit(0, "Invalid path", 2000)
+            self.emit_operation_status.emit(0, "Invalid Path", 2000)
             return
+
+        for row in range(self.ui.qt_package_settings.external_table.rowCount()):
+            item = self.ui.qt_package_settings.external_table.item(row, 0)
+            if item and item.text() == path:
+                logger.info(f"File or path '{path}' already in the table.")
+                self.emit_operation_status.emit(
+                    -1,
+                    "File or Path Already Included",
+                    2000,
+                )
+                return
 
         if os.path.isfile(path) or os.path.isdir(path):
             # Destination Path = / + basename
@@ -602,7 +802,7 @@ class QtPackage(QWidget):
         else:
             # Invalid path
             logger.warning(f"Invalid path provided for external resources: ({path})")
-            self.emit_operation_status.emit(0, "Invalid path", 2000)
+            self.emit_operation_status.emit(0, "Invalid Path", 2000)
             return
 
         # Add a new row
@@ -623,35 +823,91 @@ class QtPackage(QWidget):
         """
         Delete selected rows from the QTableWidget.
         """
-        # Get selected row indexes
-        selected_rows = set(
-            index.row()
-            for index in self.ui.qt_package_settings.external_table.selectedIndexes()
-        )
+        sender = self.sender()
+        if sender.objectName() == "external_remove_button":
+            # Get selected row indexes
+            selected_rows = set(
+                index.row()
+                for index in self.ui.qt_package_settings.external_table.selectedIndexes()
+            )
 
-        # Delete from bottom to top to avoid index shifting
-        for row in sorted(selected_rows, reverse=True):
-            self.ui.qt_package_settings.external_table.removeRow(row)
+            # Delete from bottom to top to avoid index shifting
+            for row in sorted(selected_rows, reverse=True):
+                self.ui.qt_package_settings.external_table.removeRow(row)
 
-        logger.info(f"Selected rows deleted: {selected_rows}")
+            logger.info(
+                f"Selected rows deleted: {selected_rows} from external_remove_button"
+            )
+
+        elif sender.objectName() == "dependencies_remove_button":
+            # Get selected row indexes
+            selected_rows = set(
+                index.row()
+                for index in self.ui.qt_package_settings.dependencies_table.selectedIndexes()
+            )
+
+            # Delete from bottom to top to avoid index shifting
+            for row in sorted(selected_rows, reverse=True):
+                self.ui.qt_package_settings.dependencies_table.removeRow(row)
+
+            logger.info(
+                f"Selected rows deleted: {selected_rows} from dependencies_remove_button"
+            )
 
     def extract_table_data(self) -> list[dict]:
         """
         Extract data from the QTableWidget and return it as a list of dictionaries.
         """
+        # External Data
         data = []
         row_count = self.ui.qt_package_settings.external_table.rowCount()
         col_count = self.ui.qt_package_settings.external_table.columnCount()
-        headers = [
-            self.ui.qt_package_settings.external_table.horizontalHeaderItem(i).text()
-            for i in range(col_count)
-        ]
+        headers = ["Source", "Destination"]
 
         for row in range(row_count):
             row_data = {}
             for col in range(col_count):
                 item = self.ui.qt_package_settings.external_table.item(row, col)
                 row_data[headers[col]] = item.text() if item else ""
+                row_data["Type"] = "Copy Only"
+            data.append(row_data)
+
+        # Dependencies Data
+        row_count = self.ui.qt_package_settings.dependencies_table.rowCount()
+
+        for row in range(row_count):
+            # DLLs
+            row_data = {}
+            type_item = self.ui.qt_package_settings.dependencies_table.item(row, 1)
+            item = self.ui.qt_package_settings.dependencies_table.item(row, 2)
+            if type_item is None or item is None:
+                logger.warning(f"Row {row} 2nd or 3rd column is empty, skip.")
+                continue
+
+            source_path = item.text().strip()
+            if not os.path.isfile(source_path):
+                logger.warning(f"Skip invalid DLL file: {source_path}")
+                continue
+
+            dest_path = "/" + os.path.basename(source_path)
+            row_data["Source"] = source_path
+            row_data["Destination"] = dest_path
+            row_data["Type"] = type_item.text().strip()
+            data.append(row_data)
+
+            # Other dependencies require extra path
+            row_data = {}
+            source = self.ui.qt_package_settings.dependencies_table.item(row, 3)
+            dest = self.ui.qt_package_settings.dependencies_table.item(row, 4)
+            if source is None or dest is None:
+                logger.info(f"The DLL: {source_path} doesn't require extra path")
+                continue
+
+            source_path = source.text().strip()
+            dest_path = dest.text().strip()
+            row_data["Source"] = source_path
+            row_data["Destination"] = dest_path
+            row_data["Type"] = "Copy Only"
             data.append(row_data)
 
         logger.info(f"Extracted table data: {data}")

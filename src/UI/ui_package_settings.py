@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QApplication,
     QHeaderView,
+    QTableWidget,
 )
 from PyQt6.QtCore import QSize
 from qfluentwidgets import (
@@ -297,10 +298,12 @@ class QtPackageSettingsUI(QWidget):
         self.external_table.setHorizontalHeaderLabels(
             ["Source Path (Local File / Folder)", "Destination Path (In Package)"]
         )
+        self.external_table.verticalHeader().hide()
 
         self.external_file_button = PushButton(FIF.DOCUMENT, "Select File", self)
         self.external_folder_button = PushButton(FIF.FOLDER, "Select Folder", self)
-        self.external_delete_button = PushButton(FIF.DELETE, "Delete", self)
+        self.external_remove_button = PushButton(FIF.DELETE, "Remove", self)
+        self.external_remove_button.setObjectName("external_remove_button")
 
         external_button_layout = QHBoxLayout()
         external_button_layout.addStretch(1)
@@ -308,7 +311,7 @@ class QtPackageSettingsUI(QWidget):
         external_button_layout.addSpacing(ls.SMALL_MARGIN)
         external_button_layout.addWidget(self.external_folder_button)
         external_button_layout.addSpacing(ls.SMALL_MARGIN)
-        external_button_layout.addWidget(self.external_delete_button)
+        external_button_layout.addWidget(self.external_remove_button)
         external_button_layout.addStretch(1)
 
         external_layout.addLayout(external_banner_layout)
@@ -318,6 +321,75 @@ class QtPackageSettingsUI(QWidget):
         external_layout.addLayout(external_button_layout)
 
         external_card_widget.setContentsMargins(
+            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
+        )
+
+        # Dependencies
+        dependencies_card_widget = CardWidget()
+        dependencies_layout = QVBoxLayout(dependencies_card_widget)
+
+        dependencies_label_group_layout = QVBoxLayout()
+
+        dependencies_title = BodyLabel("Include Dependencies", self)
+        dependencies_description = CaptionLabel(
+            "All selected modules will be packaged automatically", self
+        )
+        dependencies_label_group_layout.addWidget(dependencies_title)
+        dependencies_label_group_layout.addWidget(dependencies_description)
+
+        dependencies_icon = TransparentToolButton(FIF.DEVELOPER_TOOLS, self)
+        dependencies_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
+        dependencies_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
+
+        dependencies_module_title = BodyLabel("Modules:", self)
+        self.dependencies_module_combo_box = ComboBox(self)
+        self.dependencies_import_button = PushButton(FIF.DOWNLOAD, "Import", self)
+
+        dependencies_banner_layout = QHBoxLayout()
+        dependencies_banner_layout.addWidget(dependencies_icon)
+        dependencies_banner_layout.addSpacing(ls.SMALL_MARGIN)
+        dependencies_banner_layout.addLayout(dependencies_label_group_layout)
+        dependencies_banner_layout.addStretch(1)
+        dependencies_banner_layout.addWidget(dependencies_module_title)
+        dependencies_banner_layout.addWidget(self.dependencies_module_combo_box)
+        dependencies_banner_layout.addSpacing(ls.SMALL_MARGIN)
+        dependencies_banner_layout.addWidget(self.dependencies_import_button)
+
+        self.dependencies_table = TableWidget(self)
+        self.dependencies_table.setBorderVisible(True)
+        self.dependencies_table.setBorderRadius(8)
+        self.dependencies_table.setFixedHeight(200)
+        self.dependencies_table.setColumnCount(5)
+        self.dependencies_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.dependencies_table.setHorizontalHeaderLabels(
+            [
+                "Module Name",
+                "Module Type",
+                "Module DLL",
+                "Module Path",
+                "Destination Path",
+            ]
+        )
+        self.dependencies_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.dependencies_table.verticalHeader().hide()
+
+        self.dependencies_remove_button = PushButton(FIF.DELETE, "Remove", self)
+        self.dependencies_remove_button.setObjectName("dependencies_remove_button")
+
+        dependencies_button_layout = QHBoxLayout()
+        dependencies_button_layout.addStretch(1)
+        dependencies_button_layout.addWidget(self.dependencies_remove_button)
+        dependencies_button_layout.addStretch(1)
+
+        dependencies_layout.addLayout(dependencies_banner_layout)
+        dependencies_layout.addSpacing(ls.NANO_MARGIN)
+        dependencies_layout.addWidget(self.dependencies_table)
+        dependencies_layout.addSpacing(ls.NANO_MARGIN)
+        dependencies_layout.addLayout(dependencies_button_layout)
+
+        dependencies_card_widget.setContentsMargins(
             ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
         )
 
@@ -336,6 +408,7 @@ class QtPackageSettingsUI(QWidget):
         layout.addSpacing(ls.SMALL_MARGIN)
         layout.addWidget(external_dependencies_label)
         layout.addWidget(external_card_widget)
+        layout.addWidget(dependencies_card_widget)
         layout.addStretch(1)
         layout.setContentsMargins(
             ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN

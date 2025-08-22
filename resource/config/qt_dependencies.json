@@ -1,0 +1,8 @@
+{
+    "QtVirtualKeyboard": {
+        "type": "QML",
+        "dll": "%QTDIR%/bin/Qt{QT_MAJOR}VirtualKeyboard.dll",
+        "path": "%QTDIR%/qml/QtQuick/VirtualKeyboard",
+        "dest_path": "/QtQuick/VirtualKeyboard"
+    }
+}
