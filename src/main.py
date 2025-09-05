@@ -22,13 +22,20 @@ import re
 import threading
 import __main__
 import json
+import ctypes
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget, QTableWidgetItem
-from PyQt6.QtGui import QTextDocument
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QWidget,
+    QTableWidgetItem,
+    QSystemTrayIcon,
+)
+from PyQt6.QtGui import QTextDocument, QIcon
 
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
@@ -114,6 +121,7 @@ class QtPackage(QWidget):
         self.scan_qt_path()
 
         logger.info("Program initialized")
+        self.highlight_taskbar()
 
     def set_connection(self) -> None:
         """
@@ -720,7 +728,11 @@ class QtPackage(QWidget):
         )
         self.ui.qt_package_settings.setDisabled(self.is_compiling)
         self.ui.qt_package_project.package_folder_button.setDisabled(False)
-        self.emit_operation_status.emit(1, "Build & Deploy Finished", 2000)
+        self.emit_operation_status.emit(1, "Packaging Finished", 2000)
+        self.highlight_taskbar()
+        self.tray_notification(
+            "Packaging Finished", "The Qt project has been packaged successfully."
+        )
 
     @pyqtSlot(str)
     def handle_error(self, msg: str) -> None:
@@ -962,6 +974,46 @@ class QtPackage(QWidget):
         doc.setHtml(html)
         return doc.toPlainText()
 
+    def tray_notification(self, title: str, message: str):
+        """
+        Show a tray notification.
+        """
+        if getattr(__main__, "__compiled__", False):
+            relative_logo_path = os.path.join("resource", "images", "logo.png")
+        else:
+            relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
+
+        tray_icon = QSystemTrayIcon(
+            QIcon(logo_path),
+            parent=self.ui,
+        )
+        tray_icon.show()
+
+        tray_icon.showMessage(
+            title,
+            message,
+            QIcon(logo_path),
+            5000,
+        )
+
+    def highlight_taskbar(self):
+        """
+        Highlight the taskbar icon.
+        """
+        FLASHW_ALL = 3
+        FLASHW_TIMERNOFG = 12
+
+        hwnd = int(self.ui.winId())
+        flash_info = FLASHWINFO(
+            ctypes.sizeof(FLASHWINFO),
+            hwnd,
+            FLASHW_ALL | FLASHW_TIMERNOFG,
+            0,
+            0,
+        )
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(flash_info))
+
     def event(self, e):
         """
         Handle custom events.
@@ -979,6 +1031,16 @@ class ScanFinishedEvent(QEvent):
         super().__init__(ScanFinishedEvent.EVENT_TYPE)
         self.qt_versions = qt_versions
         self.qt_mingw = qt_mingw
+
+
+class FLASHWINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_uint),
+        ("hwnd", ctypes.c_void_p),
+        ("dwFlags", ctypes.c_uint),
+        ("uCount", ctypes.c_uint),
+        ("dwTimeout", ctypes.c_uint),
+    ]
 
 
 if __name__ == "__main__":

@@ -232,7 +232,7 @@ class QtCompiler(QObject):
                     self.clean_build_files()
 
                 self.output_signal.emit(
-                    '<span style="color:green; font-weight:bold;">Build & Deploy finished!</span>'
+                    '<span style="color:green; font-weight:bold;">Packaging finished!</span>'
                 )
 
         else:
