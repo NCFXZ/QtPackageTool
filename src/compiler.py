@@ -46,6 +46,7 @@ class QtCompiler(QObject):
         self._qml_dll_need_deploy_files = []
         self.is_release = False
         self.need_clean = False
+        self.jobs = 8
 
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
         self.process.readyReadStandardError.connect(self.handle_stderr)
@@ -60,6 +61,7 @@ class QtCompiler(QObject):
         external_sources: list[dict],
         is_release: bool,
         need_clean: bool,
+        jobs: int = os.cpu_count() or 8,
     ) -> None:
         """
         Compile a Qt project using QProcess.
@@ -79,6 +81,7 @@ class QtCompiler(QObject):
         self._deploy_started = False
         self._copy_sources_started = False
         self._qml_dll_deploy_count = 0
+        self.jobs = int(max(1, jobs))
 
         self.output_path = output_path
         self.qt_bin = qt_bin
@@ -169,7 +172,7 @@ class QtCompiler(QObject):
 
                 logger.info(f"Running: {make_tool}")
                 self.output_signal.emit("Running make...\n")
-                self.process.start(str(make_tool))
+                self.process.start(str(make_tool), [f"-j{self.jobs}"])
 
             elif not self._deploy_started:
                 # Step 2: make finished, start windeployqt
