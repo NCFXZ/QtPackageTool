@@ -94,7 +94,11 @@ python -B packaging/verify_installer.py dist/QtPackageTool-Setup-x64.exe
 | `QtPackageTool-Setup-x64.exe` | 62,657,528 | `922f2b3676e59d446f2f48a2afe08a7c1b5976763023ef3b0f7dd5cad96c1ed5` |
 | `QtPackageTool-files.json` | 23,902 | `90d4f682a6e2e18567e1429df94400e4cb2d1d8fb18d261e14a8af89439f3dd4` |
 
-发布后完整下载、实际客户端更新检查与下载的复验结果将登记在主分支的本记录。未发布的本地 1.0.1 测试载荷和重复构建产物已清理，保留摘要、样例源文件、截图和日志。
+已公开发布 [1.0.0](https://github.com/NCFXZ/QtPackageTool/releases/tag/v1.0.0)，源码标签对应 `2af23646944f056bd13eebcf0e830ff4eba8ab4d`。公开 Latest、两个附件的尺寸及 GitHub 摘要均核对一致。实际 UpdateService 完整下载后进入 ready，当前 1.0.0 返回 current；分发 Qt/Schannel 完整下载安装包与清单，生产 .NET helper 也完整下载同一安装包且不执行，全部 SHA-256 一致。
+
+默认策略的干净系统中，已编译 GUI 实际点击检查后显示最新版勾号，新任务栏图标清晰，随后正常关闭、卸载。Qt 的 UIA HelpText 字段为空，最初的自动断言因此超时；改为原生点击、UIA 清单及未经编辑的原生截图视觉核对，已确认勾号。证据：`logs/acceptance-1.0.0/public-final.json`、`public-native-visual-review.json`、`security/sandbox-results-final/public-current.png`。
+
+累计回收约 5.9 GiB 的旧缓存、编译中间文件、未发布 1.0.1 测试二进制及重复产物，保留最终安装包、standalone、摘要、样例源文件、截图和日志。宿主设置已恢复，两个一次性测试环境均在完成后销毁。
 
 - 目标为 Windows 10/11 x64；当前实际宿主和 Sandbox 为 Windows 11，未声称验证所有 Windows 版本、硬件或 ARM。
 - 本轮漏洞查询覆盖锁定的 Python 包和识别出的原生 Expat 风险；格式变异和压力检查有明确边界。
