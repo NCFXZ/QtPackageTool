@@ -1,0 +1,8 @@
+# Anaconda's _ctypes extension loads ffi.dll from Library/bin rather than DLLs.
+- module-name: '_ctypes'
+  dlls:
+    - by_code:
+        setup_code: 'import os, sys'
+        filename_code: '[path for path in [os.path.join(sys.base_prefix, "Library", "bin", "ffi.dll")] if os.path.isfile(path)]'
+      dest_path: '.'
+      when: 'win32'

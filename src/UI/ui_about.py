@@ -16,33 +16,38 @@
 
 import sys
 import os
-import __main__
 
-from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QApplication,
-    QLabel,
-)
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QApplication, QLabel, QWidget
+from PyQt6.QtCore import QEvent, QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QPixmap
 from qfluentwidgets import (
-    CardWidget,
-    TitleLabel,
-    StrongBodyLabel,
+    BodyLabel,
     CaptionLabel,
-    SmoothScrollArea,
     HyperlinkButton,
+    PushButton,
+    SimpleCardWidget,
+    StrongBodyLabel,
+    SubtitleLabel,
+    TitleLabel,
 )
-from qfluentwidgets import FluentIcon as FIF
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.metadata import APP_VERSION, RELEASE_DATE, REPOSITORY_URL
 import UI.ui_layout_settings as ls
+from UI import ui_icons as icons
+from UI.i18n import LocalizedPage
+from UI.ui_updates import UpdatePanel
+
+LOGO_SIZE = 72
 
 
-class AboutUI(QWidget):
-    def __init__(self, version: str, release_date: str):
+class AboutUI(LocalizedPage):
+    update_check_requested = pyqtSignal()
+    update_download_requested = pyqtSignal()
+    update_cancel_requested = pyqtSignal()
+    update_install_requested = pyqtSignal()
+
+    def __init__(self, version: str = APP_VERSION, release_date: str = RELEASE_DATE):
         """
         Initialize the AboutUI.
         """
@@ -54,95 +59,121 @@ class AboutUI(QWidget):
         """
         Setup the UI components.
         """
-        self.main_layout = QVBoxLayout(self)
-        scroll_area = SmoothScrollArea(self)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.enableTransparentBackground()
-        scroll_widget = QWidget()
-        scroll_widget.setStyleSheet("background:transparent;")
-        layout = QVBoxLayout(scroll_widget)
+        layout = ls.page_content_layout(self)
+        layout.addWidget(self.localized(TitleLabel(self), "About"))
+        layout.addSpacing(ls.PAGE_MARGIN)
+        layout.addWidget(self._overview_card())
 
-        main_label = TitleLabel("About", self)
+        layout.addSpacing(ls.SECTION_SPACING)
+        layout.addWidget(self.localized(StrongBodyLabel(self), "Details"))
 
-        # About
-        sys_info_label = StrongBodyLabel("System Information", self)
+        version_label = BodyLabel(version, self)
+        version_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        version_label.setContentsMargins(0, 0, 12, 0)
+        release_label = CaptionLabel(self)
+        self.bind_text(lambda text: release_label.setText(text.format(date=release_date)), "Release Date: {date}")
+        version_card = SimpleCardWidget()
+        version_card.setMinimumHeight(ls.FORM_CARD_HEIGHT)
+        version_layout = QVBoxLayout(version_card)
+        ls.set_card_padding(version_layout)
+        self.update_panel = UpdatePanel(version_card, version)
+        self.update_check_button = self.update_panel.action_button
+        self.update_panel.width_hint_changed.connect(self._sync_action_widths)
+        version_row = QWidget(version_card)
+        version_row.setFixedHeight(ls.FORM_CARD_HEIGHT - 2 * ls.CARD_VERTICAL_INSET)
+        version_row.setLayout(ls.form_row(
+            icons.VERSION, self.localized(BodyLabel(self), "Version"), version_label, self.update_check_button,
+            caption=release_label,
+        ))
+        version_layout.addWidget(version_row)
+        self.update_panel.check_requested.connect(self.update_check_requested.emit)
+        self.update_panel.download_requested.connect(self.update_download_requested.emit)
+        self.update_panel.cancel_requested.connect(self.update_cancel_requested.emit)
+        self.update_panel.install_requested.connect(self.update_install_requested.emit)
+        version_layout.addWidget(self.update_panel)
+        layout.addWidget(version_card)
 
-        sys_info_card_widget = CardWidget()
+        layout.addWidget(ls.form_card(ls.form_row(
+            icons.LICENSE, self.localized(BodyLabel(self), "License"),
+            self._link(f"{REPOSITORY_URL}/blob/main/LICENSE", "View License"),
+            caption=self.localized(CaptionLabel(self), "GNU General Public License v3.0"),
+        )))
 
-        sys_info_layout = QHBoxLayout(sys_info_card_widget)
+        layout.addWidget(ls.form_card(ls.form_row(
+            icons.THIRD_PARTY, self.localized(BodyLabel(self), "Third-Party Libraries"),
+            self._link("https://riverbankcomputing.com/software/pyqt/intro", "PyQt6"),
+            self._link("https://github.com/zhiyiYo/PyQt-Fluent-Widgets", "QFluentWidgets"),
+            caption=self.localized(CaptionLabel(self), "Both licensed under GPLv3"),
+        )))
 
-        sys_info_label_layout = QVBoxLayout()
+        layout.addWidget(ls.form_card(ls.form_row(
+            icons.FEEDBACK, self.localized(BodyLabel(self), "Feedback"),
+            self._link(f"{REPOSITORY_URL}/issues", "Report Issue"),
+            caption=self.localized(CaptionLabel(self), "Report bugs or suggest features"),
+        )))
+        layout.addStretch(1)
+        self._sync_action_widths()
 
-        name_label = StrongBodyLabel("Qt Package Tool", self)
-        version_label = CaptionLabel(f"Version: {version}", self)
-        release_date_label = CaptionLabel(f"Release Date: {release_date}", self)
-        license_label = CaptionLabel(
-            "Copyright (c) 2025 NCFXZ<br>"
-            'Licensed under the GNU General Public License v3.0 (GPLv3). See <a href="https://github.com/NCFXZ/QtPackageTool/blob/main/LICENSE">LICENSE</a> file for details.<br>'
-            'This program uses <a href="https://riverbankcomputing.com/software/pyqt/intro">PyQt6 (GPLv3)</a>.'
-        )
-        license_label.setOpenExternalLinks(True)
+    def _sync_action_widths(self) -> None:
+        width = max(ls.action_button_width(self.github_button), self.update_panel.preferred_action_width())
+        for button in (self.github_button, self.update_check_button):
+            if button.width() != width:
+                button.setFixedWidth(width)
 
-        sys_info_label_layout.addWidget(name_label)
-        sys_info_label_layout.addWidget(version_label)
-        sys_info_label_layout.addWidget(release_date_label)
-        sys_info_label_layout.addWidget(license_label)
-        sys_info_label_layout.addStretch(1)
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.LanguageChange:
+            self._sync_action_widths()
 
-        sys_info_icon = QLabel(self)
-        if getattr(__main__, "__compiled__", False):
-            relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
-        else:
-            relative_logo_path = os.path.join(
-                "..", "..", "resource", "images", "logo.png"
-            )
-        logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
-        pixmap = QPixmap(logo_path)
-        pixmap = pixmap.scaled(
-            QSize(ls.LARGE_ICON_SIZE, ls.LARGE_ICON_SIZE),
+    def set_update_state(self, state: str, version: str = "", notes: str = "", message: str = "") -> None:
+        self.update_panel.set_state(state, version, notes, message)
+
+    def set_update_progress(self, received: int, total: int) -> None:
+        self.update_panel.set_progress(received, total)
+
+    def set_update_install_allowed(self, allowed: bool) -> None:
+        self.update_panel.set_install_allowed(allowed)
+
+    def _overview_card(self) -> SimpleCardWidget:
+        card = SimpleCardWidget()
+        row = QHBoxLayout(card)
+        row.setContentsMargins(ls.CARD_INSET, ls.CARD_INSET, ls.CARD_INSET, ls.CARD_INSET)
+        row.setSpacing(ls.ICON_TEXT_SPACING)
+
+        logo = QLabel(card)
+        logo.setPixmap(QPixmap(icons.app_logo_path()).scaled(
+            QSize(LOGO_SIZE, LOGO_SIZE),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
-        )
-        sys_info_icon.setPixmap(pixmap)
+        ))
+        row.addWidget(logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        sys_info_layout.addWidget(sys_info_icon)
-        sys_info_layout.addSpacing(ls.SMALL_MARGIN)
-        sys_info_layout.addLayout(sys_info_label_layout)
-        sys_info_layout.addStretch(1)
-        sys_info_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        text.addStretch(1)
+        text.addWidget(SubtitleLabel("Qt Package Tool", card))
+        copyright_label = CaptionLabel("Copyright (c) 2025 NCFXZ", card)
+        copyright_label.setTextColor(light=ls.SECONDARY_TEXT_LIGHT, dark=ls.SECONDARY_TEXT_DARK)
+        text.addWidget(copyright_label)
+        text.addStretch(1)
+        row.addLayout(text, 1)
 
-        self.github_hyperlink = HyperlinkButton(
-            "https://github.com/NCFXZ/QtPackageTool",
-            "GitHub Repository",
-            self,
-            FIF.GITHUB,
-        )
-        hyperlink_layout = QHBoxLayout()
-        hyperlink_layout.addStretch(1)
-        hyperlink_layout.addWidget(self.github_hyperlink)
+        self.github_button = self.localized(PushButton(icons.REPOSITORY, "", card), "GitHub Repository")
+        self.github_button.setFixedHeight(ls.CONTROL_HEIGHT)
+        self.github_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(REPOSITORY_URL)))
+        row.addWidget(self.github_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        return card
 
-        # Main Layout
-        layout.addWidget(main_label)
-        layout.addSpacing(ls.MEDIUM_MARGIN)
-        layout.addWidget(sys_info_label)
-        layout.addWidget(sys_info_card_widget)
-        layout.addLayout(hyperlink_layout)
-        layout.addStretch(1)
-        layout.setContentsMargins(
-            ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN
-        )
-
-        scroll_area.setWidget(scroll_widget)
-        self.main_layout.addWidget(scroll_area)
-
-        self.setStyleSheet(ls.STYLE_SHEET)
+    def _link(self, url: str, label: str) -> HyperlinkButton:
+        button = self.localized(HyperlinkButton(url, "", self), label)
+        button.setFixedHeight(ls.CONTROL_HEIGHT)
+        button.setToolTip(url)
+        return button
 
 
 if __name__ == "__main__":
     sys.argv += ["-platform", "windows:darkmode=0"]
     app = QApplication(sys.argv)
-    window = AboutUI("UNKNOWN", "UNKNOWN")
+    window = AboutUI()
     window.show()
     sys.exit(app.exec())

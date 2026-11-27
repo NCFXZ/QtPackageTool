@@ -18,406 +18,387 @@ import sys
 import os
 
 from PyQt6.QtWidgets import (
-    QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QApplication,
+    QCompleter,
     QHeaderView,
     QTableWidget,
+    QTableWidgetItem,
+    QWidget,
 )
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QEvent, QMimeData, QStringListModel, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter
 from qfluentwidgets import (
-    CardWidget,
     ComboBox,
+    EditableComboBox,
     PushButton,
     LineEdit,
-    TransparentToolButton,
+    SimpleCardWidget,
+    SmoothScrollArea,
+    FluentIconBase,
     TitleLabel,
     StrongBodyLabel,
     BodyLabel,
     CaptionLabel,
     SwitchButton,
-    SmoothScrollArea,
-    HyperlinkButton,
     TableWidget,
+    isDarkTheme,
 )
-from qfluentwidgets import FluentIcon as FIF
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import UI.ui_layout_settings as ls
+from UI import ui_icons as icons
+from UI.i18n import LocalizedPage, tr
 
 
-class QtPackageSettingsUI(QWidget):
+def local_paths(mime: QMimeData) -> list[str]:
+    urls = mime.urls() if mime.hasUrls() else []
+    paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+    return paths if paths and len(paths) == len(urls) else []
+
+
+def project_file(mime: QMimeData) -> str:
+    """Return the dropped .pro or CMakeLists.txt file, if exactly one was dropped."""
+    paths = local_paths(mime)
+    if len(paths) != 1:
+        return ""
+    name = paths[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    return paths[0] if name.endswith(".pro") or name == "cmakelists.txt" else ""
+
+
+def table_item(text: str) -> QTableWidgetItem:
+    item = QTableWidgetItem(text)
+    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+    item.setToolTip(text)
+    return item
+
+
+class PathTable(TableWidget):
+    """
+    Table that shows a hint while empty and can accept dropped local files and folders.
+    """
+
+    paths_dropped = pyqtSignal(list)
+
+    def __init__(self, parent: QWidget, accept_drops: bool = False):
+        super().__init__(parent)
+        self._placeholder = ""
+        self.setAcceptDrops(accept_drops)
+        self.viewport().setAcceptDrops(accept_drops)
+        model = self.model()
+        model.rowsInserted.connect(self.viewport().update)
+        model.rowsRemoved.connect(self.viewport().update)
+
+    def setPlaceholderText(self, text: str) -> None:
+        self._placeholder = text
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.rowCount() or not self._placeholder:
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(QColor(ls.SECONDARY_TEXT_DARK if isDarkTheme() else ls.SECONDARY_TEXT_LIGHT))
+        painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self._placeholder)
+
+    def dragEnterEvent(self, event) -> None:
+        if local_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        paths = local_paths(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self.paths_dropped.emit(paths)
+
+
+class QtPackageSettingsUI(LocalizedPage):
+    project_dropped = pyqtSignal(str)
+
     def __init__(self):
         """
         Initialize the QtPackageSettingsUI.
         """
         super().__init__()
         self.setObjectName("QtPackageSettingsUI")
+        self._kit_scanning = False
+        self._kit_placeholder = "Select a Qt kit"
+        self._dependency_placeholder = "Select a Qt kit first"
         self.setup_ui()
+        self.setAcceptDrops(True)
 
     def setup_ui(self) -> None:
         """
         Setup the UI components.
         """
-        self.main_layout = QVBoxLayout(self)
-        scroll_area = SmoothScrollArea(self)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.enableTransparentBackground()
-        scroll_widget = QWidget()
-        scroll_widget.setStyleSheet("background:transparent;")
-        layout = QVBoxLayout(scroll_widget)
+        layout = ls.page_content_layout(self)
+        layout.addWidget(self.localized(TitleLabel(self), "Project Setup"))
+        layout.addSpacing(ls.PAGE_MARGIN)
 
-        main_label = TitleLabel("Environment & Project Settings", self)
+        layout.addWidget(self.localized(StrongBodyLabel(self), "Environment"))
+        self.kit_combo = ComboBox(self)
+        self.kit_combo.setFixedSize(ls.FORM_FIELD_WIDTH, ls.CONTROL_HEIGHT)
+        self.env_button = self._action(icons.BROWSE, "Browse...")
+        self.set_kit_search_state(False)
+        layout.addWidget(ls.form_card(self._form_row(
+            icons.QT_KIT, "Qt Kit", self.kit_combo, self.env_button,
+            caption="MinGW or MSVC is matched automatically",
+        )))
 
-        # Environment
-        env_label = StrongBodyLabel("Environment", self)
-        env_card_widget = CardWidget()
-        env_layout = QHBoxLayout(env_card_widget)
+        layout.addSpacing(ls.SECTION_SPACING)
+        layout.addWidget(self.localized(StrongBodyLabel(self), "Project"))
 
-        env_label_group_layout = QVBoxLayout()
+        self.project_select_edit = self._path_edit("Select a .pro or CMakeLists.txt file")
+        self.project_button = self._action(icons.BROWSE, "Browse...")
+        layout.addWidget(ls.form_card(self._form_row(
+            icons.PROJECT, "Project Selection", self.project_select_edit, self.project_button,
+            caption="Only build trusted qmake or CMake projects",
+        )))
 
-        env_title = BodyLabel("Qt Environment Configuration", self)
-        env_description = CaptionLabel(
-            "Select the Qt version and compiler to build your project", self
-        )
-        env_label_group_layout.addWidget(env_title)
-        env_label_group_layout.addWidget(env_description)
-
-        env_qt_version_label = BodyLabel("Qt Version:", self)
-        self.env_qt_version_combo_box = ComboBox(self)
-
-        env_qt_mingw_label = BodyLabel("MinGW:", self)
-        self.env_qt_mingw_combo_box = ComboBox(self)
-
-        self.env_button = PushButton(FIF.FOLDER, "Browse...", self)
-
-        env_icon = TransparentToolButton(FIF.TRANSPARENT, self)
-        env_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        env_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
-
-        env_layout.addWidget(env_icon)
-        env_layout.addSpacing(ls.SMALL_MARGIN)
-        env_layout.addLayout(env_label_group_layout)
-        env_layout.addStretch(1)
-        env_layout.addWidget(env_qt_version_label)
-        env_layout.addWidget(self.env_qt_version_combo_box)
-        env_layout.addSpacing(ls.SMALL_MARGIN)
-        env_layout.addWidget(env_qt_mingw_label)
-        env_layout.addWidget(self.env_qt_mingw_combo_box)
-        env_layout.addSpacing(ls.SMALL_MARGIN)
-        env_layout.addWidget(self.env_button)
-
-        env_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
-
-        self.env_compiler_mingw_version_hyperlink = HyperlinkButton(
-            "https://wiki.qt.io/MinGW",
-            "Find the MinGW compiler corresponding to the Qt version",
-            self,
-            FIF.LINK,
-        )
-        hyperlink_layout = QHBoxLayout()
-        hyperlink_layout.addStretch(1)
-        hyperlink_layout.addWidget(self.env_compiler_mingw_version_hyperlink)
-
-        # Project Selection
-        project_label = StrongBodyLabel("Project", self)
-        project_select_card_widget = CardWidget()
-        project_layout = QHBoxLayout(project_select_card_widget)
-
-        project_select_label_group_layout = QVBoxLayout()
-
-        project_select_title = BodyLabel("Project Selection", self)
-        project_select_description = CaptionLabel(
-            "Select a Qt project (.pro) file to configure the project", self
-        )
-
-        self.project_select_edit = LineEdit(self)
-        self.project_select_edit.setPlaceholderText(
-            "Choose a Qt project (.pro) file..."
-        )
-        self.project_select_edit.setReadOnly(True)
-        self.project_select_edit.setMinimumWidth(ls.LARGE_EDIT_WIDTH)
-
-        project_select_label_group_layout.addWidget(project_select_title)
-        project_select_label_group_layout.addWidget(project_select_description)
-
-        project_select_icon = TransparentToolButton(FIF.DOCUMENT, self)
-        project_select_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        project_select_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
-
-        self.project_button = PushButton(FIF.FOLDER, "Browse...", self)
-
-        project_layout.addWidget(project_select_icon)
-        project_layout.addSpacing(ls.SMALL_MARGIN)
-        project_layout.addLayout(project_select_label_group_layout)
-        project_layout.addStretch(1)
-        project_layout.addWidget(self.project_select_edit)
-        project_layout.addSpacing(ls.SMALL_MARGIN)
-        project_layout.addWidget(self.project_button)
-
-        project_select_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
-
-        # Build Options
-        build_card_widget = CardWidget()
-        build_layout = QHBoxLayout(build_card_widget)
-
-        build_label_group_layout = QVBoxLayout()
-
-        build_title = BodyLabel("Build Options", self)
-        build_description = CaptionLabel(
-            "Select the build configuration for your project", self
-        )
-        build_label_group_layout.addWidget(build_title)
-        build_label_group_layout.addWidget(build_description)
+        self.output_path_edit = self._path_edit("Select an output folder")
+        self.output_path_button = self._action(icons.BROWSE, "Browse...")
+        layout.addWidget(ls.form_card(self._form_row(
+            icons.OUTPUT, "Output Path", self.output_path_edit, self.output_path_button,
+            caption="One subfolder per package",
+        )))
 
         self.build_combo_box = ComboBox(self)
-        self.build_combo_box.addItems(["Release", "Debug"])
-
-        build_icon = TransparentToolButton(FIF.COMMAND_PROMPT, self)
-        build_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        build_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
-
-        build_layout.addWidget(build_icon)
-        build_layout.addSpacing(ls.SMALL_MARGIN)
-        build_layout.addLayout(build_label_group_layout)
-        build_layout.addStretch(1)
-        build_layout.addWidget(self.build_combo_box)
-
-        build_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
-
-        # Output Path
-        output_path_card_widget = CardWidget()
-        output_path_layout = QHBoxLayout(output_path_card_widget)
-
-        output_path_label_group_layout = QVBoxLayout()
-
-        output_path_title = BodyLabel("Output Path", self)
-        output_path_description = CaptionLabel(
-            "Select the folder where the compiled application and deployment files will be saved",
-            self,
-        )
-        output_path_label_group_layout.addWidget(output_path_title)
-        output_path_label_group_layout.addWidget(output_path_description)
-
-        self.output_path_edit = LineEdit(self)
-        self.output_path_edit.setPlaceholderText("Choose an output folder...")
-        self.output_path_edit.setReadOnly(True)
-        self.output_path_edit.setMinimumWidth(ls.LARGE_EDIT_WIDTH)
-
-        output_path_icon = TransparentToolButton(FIF.SAVE, self)
-        output_path_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        output_path_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
-
-        self.output_path_button = PushButton(FIF.FOLDER, "Browse...", self)
-
-        output_path_layout.addWidget(output_path_icon)
-        output_path_layout.addSpacing(ls.SMALL_MARGIN)
-        output_path_layout.addLayout(output_path_label_group_layout)
-        output_path_layout.addStretch(1)
-        output_path_layout.addWidget(self.output_path_edit)
-        output_path_layout.addSpacing(ls.SMALL_MARGIN)
-        output_path_layout.addWidget(self.output_path_button)
-
-        output_path_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
-
-        # Auto-Clean Build Files
-        clean_card_widget = CardWidget()
-        clean_layout = QHBoxLayout(clean_card_widget)
-
-        clean_label_group_layout = QVBoxLayout()
-
-        clean_title = BodyLabel("Auto-Clean Build Files", self)
-        clean_description = CaptionLabel(
-            "Remove all .cpp, .c, and .o files from the build folder after building",
-            self,
-        )
-        clean_label_group_layout.addWidget(clean_title)
-        clean_label_group_layout.addWidget(clean_description)
+        self.build_combo_box.setFixedSize(ls.ACTION_WIDTH, ls.CONTROL_HEIGHT)
+        self.build_combo_box.addItem("Release", userData=True)
+        self.build_combo_box.addItem("Debug", userData=False)
+        layout.addWidget(ls.form_card(self._form_row(
+            icons.BUILD_MODE, "Build Options", self.build_combo_box
+        )))
 
         self.clean_switch = SwitchButton(self)
+        self.bind_text(self.clean_switch.setOnText, "On")
+        self.bind_text(self.clean_switch.setOffText, "Off")
+        layout.addWidget(ls.form_card(self._form_row(
+            icons.CLEAN_BUILD_FILES, "Auto-Clean Build Files", self.clean_switch,
+            caption="Only this build's temporary files",
+        )))
 
-        clean_icon = TransparentToolButton(FIF.CODE, self)
-        clean_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        clean_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
+        layout.addSpacing(ls.SECTION_SPACING)
+        layout.addWidget(self.localized(StrongBodyLabel(self), "External Files & Dependencies"))
 
-        clean_layout.addWidget(clean_icon)
-        clean_layout.addSpacing(ls.SMALL_MARGIN)
-        clean_layout.addLayout(clean_label_group_layout)
-        clean_layout.addStretch(1)
-        clean_layout.addWidget(self.clean_switch)
+        self.external_table = self._table(2, accept_drops=True)
+        self.bind_text(self.external_table.setPlaceholderText, "Drop files or folders here, or use the buttons below")
+        self.external_file_button = self._action(icons.ADD_EXTERNAL_FILE, "Select File")
+        self.external_folder_button = self._action(icons.ADD_EXTERNAL_FOLDER, "Select Folder")
+        self.external_remove_button = self._action(icons.REMOVE, "Remove")
+        self.external_remove_button.clicked.connect(lambda: self.remove_selected_rows(self.external_table))
+        layout.addWidget(self._table_card(
+            self._form_row(icons.EXTERNAL_FILES, "Include External Files / Folders"),
+            self.external_table,
+            self.external_file_button, self.external_folder_button, self.external_remove_button,
+        ))
 
-        clean_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
+        self.dependencies_module_combo_box = EditableComboBox(self)
+        self.dependencies_module_combo_box.setFixedSize(ls.FORM_FIELD_WIDTH, ls.CONTROL_HEIGHT)
+        self.dependencies_module_combo_box.setMaxVisibleItems(12)
+        self.dependencies_module_combo_box.setClearButtonEnabled(True)
+        self.dependencies_module_combo_box.returnPressed.disconnect()
+        self._dependency_names = QStringListModel(self)
+        completer = QCompleter(self._dependency_names, self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.dependencies_module_combo_box.setCompleter(completer)
+        self.dependencies_import_button = self._action(icons.IMPORT_DEPENDENCY, "Import")
+        self.dependencies_import_button.setDisabled(True)
+        self.set_dependency_choices({})
 
-        # External Files & Dependencies
-        external_dependencies_label = StrongBodyLabel(
-            "External Files & Dependencies", self
-        )
+        self.dependencies_table = self._table(4)
+        self.bind_text(self.dependencies_table.setPlaceholderText, "Search for a dependency above and import it")
+        self.dependencies_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.dependencies_remove_button = self._action(icons.REMOVE, "Remove")
+        self.dependencies_remove_button.clicked.connect(lambda: self.remove_selected_rows(self.dependencies_table))
+        layout.addWidget(self._table_card(
+            self._form_row(
+                icons.DEPENDENCIES, "Include Qt Dependencies",
+                self.dependencies_module_combo_box, self.dependencies_import_button,
+                caption="Libraries, plugins, QML modules",
+            ),
+            self.dependencies_table, self.dependencies_remove_button,
+        ))
 
-        # External Files
-        external_card_widget = CardWidget()
-        external_layout = QVBoxLayout(external_card_widget)
+        layout.addStretch(1)
+        self._set_table_headers()
 
-        external_label_group_layout = QVBoxLayout()
+    def _action(self, icon: FluentIconBase, label: str) -> PushButton:
+        button = self.localized(PushButton(icon, "", self), label)
+        button.setFixedSize(ls.ACTION_WIDTH, ls.CONTROL_HEIGHT)
+        return button
 
-        external_title = BodyLabel("Include External Files / Folders", self)
-        external_description = CaptionLabel(
-            "Copy selected files or folders into the package directory", self
-        )
-        external_label_group_layout.addWidget(external_title)
-        external_label_group_layout.addWidget(external_description)
+    def _path_edit(self, placeholder: str) -> LineEdit:
+        edit = LineEdit(self)
+        edit.setReadOnly(True)
+        edit.setAcceptDrops(False)
+        edit.setFixedSize(ls.FORM_FIELD_WIDTH, ls.CONTROL_HEIGHT)
+        self.bind_text(edit.setPlaceholderText, placeholder)
+        edit.textChanged.connect(edit.setToolTip)
+        return edit
 
-        external_icon = TransparentToolButton(FIF.COPY, self)
-        external_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        external_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
+    def _form_row(
+        self, icon: FluentIconBase, title: str, *controls: QWidget, caption: str | None = None
+    ) -> QHBoxLayout:
+        heading = self.localized(BodyLabel(self), title)
+        description = self.localized(CaptionLabel(self), caption) if caption is not None else None
+        return ls.form_row(icon, heading, *controls, caption=description)
 
-        external_banner_layout = QHBoxLayout()
-        external_banner_layout.addWidget(external_icon)
-        external_banner_layout.addSpacing(ls.SMALL_MARGIN)
-        external_banner_layout.addLayout(external_label_group_layout)
-        external_banner_layout.addStretch(1)
+    def _table(self, columns: int, accept_drops: bool = False) -> PathTable:
+        table = PathTable(self, accept_drops)
+        table.setWordWrap(False)
+        table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        table.setBorderVisible(True)
+        table.setBorderRadius(8)
+        table.setFixedHeight(ls.TABLE_HEIGHT)
+        table.setColumnCount(columns)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().hide()
+        return table
 
-        self.external_table = TableWidget(self)
-        self.external_table.setBorderVisible(True)
-        self.external_table.setBorderRadius(8)
-        self.external_table.setFixedHeight(200)
-        self.external_table.setColumnCount(2)
-        self.external_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
+    def _table_card(self, header: QHBoxLayout, table: TableWidget, *buttons: PushButton) -> SimpleCardWidget:
+        card = SimpleCardWidget()
+        layout = QVBoxLayout(card)
+        ls.set_card_padding(layout)
+
+        banner = QWidget(card)
+        banner.setFixedHeight(ls.TABLE_HEADER_HEIGHT)
+        banner.setLayout(header)
+        layout.addWidget(banner)
+        layout.addWidget(table)
+        layout.addLayout(ls.centered_actions(*buttons))
+        return card
+
+    def add_external_row(self, source: str, destination: str) -> bool:
+        """Add an external file or folder unless it is already listed."""
+        normalized = os.path.normcase(os.path.normpath(source))
+        if any(os.path.normcase(os.path.normpath(row[0])) == normalized for row in self.external_rows()):
+            return False
+        table = self.external_table
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setItem(row, 0, table_item(source))
+        table.setItem(row, 1, table_item(destination))
+        return True
+
+    def external_rows(self) -> list[tuple[str, str]]:
+        table = self.external_table
+        return [
+            (source.text(), destination.text())
+            for row in range(table.rowCount())
+            if (source := table.item(row, 0)) and (destination := table.item(row, 1))
+        ]
+
+    def add_dependency_row(self, dependency, debug: bool) -> bool:
+        """Add a Qt dependency unless it is already listed."""
+        if any(item.name == dependency.name for item in self.dependencies()):
+            return False
+        table = self.dependencies_table
+        row = table.rowCount()
+        table.insertRow(row)
+        artifact = dependency.build_entries(debug)[0]
+        for column, value in enumerate(
+            (dependency.name, tr(dependency.kind), artifact["Source"], artifact["Destination"])
+        ):
+            table.setItem(row, column, table_item(value))
+        table.item(row, 0).setData(Qt.ItemDataRole.UserRole, dependency)
+        table.item(row, 1).setData(Qt.ItemDataRole.UserRole, dependency.kind)
+        return True
+
+    def dependencies(self) -> list:
+        table = self.dependencies_table
+        return [
+            dependency for row in range(table.rowCount())
+            if (item := table.item(row, 0)) and (dependency := item.data(Qt.ItemDataRole.UserRole))
+        ]
+
+    def update_dependency_paths(self, debug: bool) -> None:
+        table = self.dependencies_table
+        for row, dependency in enumerate(self.dependencies()):
+            artifact = dependency.build_entries(debug)[0]
+            for column, field in ((2, "Source"), (3, "Destination")):
+                item = table.item(row, column)
+                item.setText(artifact[field])
+                item.setToolTip(artifact[field])
+
+    @staticmethod
+    def remove_selected_rows(table: QTableWidget) -> None:
+        for row in sorted({index.row() for index in table.selectedIndexes()}, reverse=True):
+            table.removeRow(row)
+
+    def reveal(self, widget: QWidget) -> None:
+        self.findChild(SmoothScrollArea).ensureWidgetVisible(widget, 0, ls.FORM_CARD_HEIGHT)
+        widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def dragEnterEvent(self, event) -> None:
+        if project_file(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        path = project_file(event.mimeData())
+        if path:
+            event.acceptProposedAction()
+            self.project_dropped.emit(path)
+
+    def _set_table_headers(self) -> None:
         self.external_table.setHorizontalHeaderLabels(
-            ["Source Path (Local File / Folder)", "Destination Path (In Package)"]
-        )
-        self.external_table.verticalHeader().hide()
-
-        self.external_file_button = PushButton(FIF.DOCUMENT, "Select File", self)
-        self.external_folder_button = PushButton(FIF.FOLDER, "Select Folder", self)
-        self.external_remove_button = PushButton(FIF.DELETE, "Remove", self)
-        self.external_remove_button.setObjectName("external_remove_button")
-
-        external_button_layout = QHBoxLayout()
-        external_button_layout.addStretch(1)
-        external_button_layout.addWidget(self.external_file_button)
-        external_button_layout.addSpacing(ls.SMALL_MARGIN)
-        external_button_layout.addWidget(self.external_folder_button)
-        external_button_layout.addSpacing(ls.SMALL_MARGIN)
-        external_button_layout.addWidget(self.external_remove_button)
-        external_button_layout.addStretch(1)
-
-        external_layout.addLayout(external_banner_layout)
-        external_layout.addSpacing(ls.NANO_MARGIN)
-        external_layout.addWidget(self.external_table)
-        external_layout.addSpacing(ls.NANO_MARGIN)
-        external_layout.addLayout(external_button_layout)
-
-        external_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
-        )
-
-        # Dependencies
-        dependencies_card_widget = CardWidget()
-        dependencies_layout = QVBoxLayout(dependencies_card_widget)
-
-        dependencies_label_group_layout = QVBoxLayout()
-
-        dependencies_title = BodyLabel("Include Dependencies", self)
-        dependencies_description = CaptionLabel(
-            "All selected modules will be packaged automatically", self
-        )
-        dependencies_label_group_layout.addWidget(dependencies_title)
-        dependencies_label_group_layout.addWidget(dependencies_description)
-
-        dependencies_icon = TransparentToolButton(FIF.DEVELOPER_TOOLS, self)
-        dependencies_icon.setFixedSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE)
-        dependencies_icon.setIconSize(QSize(ls.SMALL_ICON_SIZE, ls.SMALL_ICON_SIZE))
-
-        dependencies_module_title = BodyLabel("Modules:", self)
-        self.dependencies_module_combo_box = ComboBox(self)
-        self.dependencies_import_button = PushButton(FIF.DOWNLOAD, "Import", self)
-
-        dependencies_banner_layout = QHBoxLayout()
-        dependencies_banner_layout.addWidget(dependencies_icon)
-        dependencies_banner_layout.addSpacing(ls.SMALL_MARGIN)
-        dependencies_banner_layout.addLayout(dependencies_label_group_layout)
-        dependencies_banner_layout.addStretch(1)
-        dependencies_banner_layout.addWidget(dependencies_module_title)
-        dependencies_banner_layout.addWidget(self.dependencies_module_combo_box)
-        dependencies_banner_layout.addSpacing(ls.SMALL_MARGIN)
-        dependencies_banner_layout.addWidget(self.dependencies_import_button)
-
-        self.dependencies_table = TableWidget(self)
-        self.dependencies_table.setBorderVisible(True)
-        self.dependencies_table.setBorderRadius(8)
-        self.dependencies_table.setFixedHeight(200)
-        self.dependencies_table.setColumnCount(5)
-        self.dependencies_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
+            [tr("Source Path (Local File / Folder)"), tr("Destination Path (In Package)")]
         )
         self.dependencies_table.setHorizontalHeaderLabels(
-            [
-                "Module Name",
-                "Module Type",
-                "Module DLL",
-                "Module Path",
-                "Destination Path",
-            ]
-        )
-        self.dependencies_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.dependencies_table.verticalHeader().hide()
-
-        self.dependencies_remove_button = PushButton(FIF.DELETE, "Remove", self)
-        self.dependencies_remove_button.setObjectName("dependencies_remove_button")
-
-        dependencies_button_layout = QHBoxLayout()
-        dependencies_button_layout.addStretch(1)
-        dependencies_button_layout.addWidget(self.dependencies_remove_button)
-        dependencies_button_layout.addStretch(1)
-
-        dependencies_layout.addLayout(dependencies_banner_layout)
-        dependencies_layout.addSpacing(ls.NANO_MARGIN)
-        dependencies_layout.addWidget(self.dependencies_table)
-        dependencies_layout.addSpacing(ls.NANO_MARGIN)
-        dependencies_layout.addLayout(dependencies_button_layout)
-
-        dependencies_card_widget.setContentsMargins(
-            ls.SMALL_MARGIN, ls.NANO_MARGIN, ls.SMALL_MARGIN, ls.NANO_MARGIN
+            [tr("Dependency"), tr("Type"), tr("Source Path"), tr("Package Path")]
         )
 
-        # Main Layout
-        layout.addWidget(main_label)
-        layout.addSpacing(ls.MEDIUM_MARGIN)
-        layout.addWidget(env_label)
-        layout.addWidget(env_card_widget)
-        layout.addLayout(hyperlink_layout)
-        layout.addSpacing(ls.SMALL_MARGIN)
-        layout.addWidget(project_label)
-        layout.addWidget(project_select_card_widget)
-        layout.addWidget(output_path_card_widget)
-        layout.addWidget(build_card_widget)
-        layout.addWidget(clean_card_widget)
-        layout.addSpacing(ls.SMALL_MARGIN)
-        layout.addWidget(external_dependencies_label)
-        layout.addWidget(external_card_widget)
-        layout.addWidget(dependencies_card_widget)
-        layout.addStretch(1)
-        layout.setContentsMargins(
-            ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN, ls.MEDIUM_MARGIN
-        )
+    def set_kit_search_state(self, scanning: bool, placeholder: str = "Select a Qt kit") -> None:
+        self._kit_scanning = scanning
+        self._kit_placeholder = placeholder
+        self.env_button.setDisabled(scanning)
+        self.env_button.setText(tr("Scanning..." if scanning else "Browse..."))
+        if self.kit_combo.currentIndex() < 0:
+            self.kit_combo.setPlaceholderText(tr(placeholder))
 
-        scroll_area.setWidget(scroll_widget)
-        self.main_layout.addWidget(scroll_area)
+    def set_dependency_choices(self, choices: dict, *, kit_selected: bool = False) -> None:
+        combo = self.dependencies_module_combo_box
+        combo.clear()
+        for label, dependency in choices.items():
+            combo.addItem(label, userData=dependency)
+        combo.setCurrentIndex(-1)
+        self._dependency_names.setStringList(list(choices))
+        combo.setEnabled(bool(choices))
+        if choices:
+            self._dependency_placeholder = "Search installed dependencies"
+        elif kit_selected:
+            self._dependency_placeholder = "No Qt dependencies available"
+        else:
+            self._dependency_placeholder = "Select a Qt kit first"
+        self._update_dependency_placeholder()
 
-        self.setStyleSheet(ls.STYLE_SHEET)
+    def _update_dependency_placeholder(self) -> None:
+        self.dependencies_module_combo_box.setPlaceholderText(tr(self._dependency_placeholder))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.LanguageChange:
+            self._set_table_headers()
+            self.set_kit_search_state(self._kit_scanning, self._kit_placeholder)
+            self._update_dependency_placeholder()
+            for row in range(self.dependencies_table.rowCount()):
+                kind = self.dependencies_table.item(row, 1)
+                if kind is not None:
+                    text = tr(kind.data(Qt.ItemDataRole.UserRole))
+                    kind.setText(text)
+                    kind.setToolTip(text)
 
 
 if __name__ == "__main__":

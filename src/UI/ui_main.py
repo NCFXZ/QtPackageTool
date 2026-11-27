@@ -16,33 +16,48 @@
 
 import os
 import sys
-import __main__
 
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from qfluentwidgets import (
+    DotInfoBadge,
+    InfoBadgePosition,
     NavigationItemPosition,
     setTheme,
     setThemeColor,
-    Theme,
     FluentWindow,
 )
-from qfluentwidgets import FluentIcon as FIF
 from qframelesswindow.utils import getSystemAccentColor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.runtime import RESOURCE_DIR
+from app.preferences import AppPreferences
+from app.metadata import APP_VERSION, RELEASE_DATE
+from UI import ui_icons as icons
 from UI.ui_package_settings import QtPackageSettingsUI
 from UI.ui_package_project import QtPackageProjectUI
 from UI.ui_about import AboutUI
+from UI.i18n import tr
+from UI.ui_preferences import PreferencesUI, THEMES
 
 
 class MainUI(FluentWindow):
-    def __init__(self):
+    def __init__(self, preferences: AppPreferences | None = None):
         """
         Initialize the MainUI.
         """
         super().__init__()
         self.setObjectName("MainUI")
+        self._navigation_labels = ()
+        self._packaging_badge = None
+        self._packaging_badge_level = None
+        self.preferences = preferences if preferences is not None else AppPreferences(RESOURCE_DIR)
+        self.preferences.theme_changed.connect(self.apply_theme)
+        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+        if sys.platform == "win32":
+            setThemeColor(getSystemAccentColor(), save=False)
+        self.apply_theme(self.preferences.theme)
         self.setup_ui()
 
     def setup_ui(self) -> None:
@@ -51,50 +66,82 @@ class MainUI(FluentWindow):
         """
 
         self.setWindowTitle("Qt Package Tool")
-        if getattr(__main__, "__compiled__", False):
-            relative_logo_path = os.path.join("..", "resource", "images", "logo.png")
+        self.setWindowIcon(QIcon(icons.app_logo_path()))
+        self.setMinimumSize(1180, 680)
+        primary = QApplication.primaryScreen()
+        if primary is not None:
+            screen = primary.availableGeometry()
+            self.resize(self.minimumWidth(), max(self.minimumHeight(), min(800, screen.height())))
+            window_geometry = self.frameGeometry()
+            window_geometry.moveCenter(screen.center())
+            self.move(window_geometry.topLeft())
         else:
-            relative_logo_path = os.path.join(
-                "..", "..", "resource", "images", "logo.png"
-            )
-        logo_path = os.path.join(os.path.dirname(__file__), relative_logo_path)
-        self.setWindowIcon(QIcon(logo_path))
-        self.setMinimumSize(1200, 800)
-        screen = QApplication.primaryScreen().availableGeometry()
-        window_geometry = self.frameGeometry()
-        center_point = screen.center()
-        window_geometry.moveCenter(center_point)
-        self.move(window_geometry.topLeft())
+            self.resize(self.minimumWidth(), 800)
+        self.restoreGeometry(self.preferences.window_geometry())
 
         self.qt_package_settings = QtPackageSettingsUI()
         self.qt_package_project = QtPackageProjectUI()
-        self.about_ui = AboutUI("0.9.0 Beta", "2025/11/10")
+        self.preferences_ui = PreferencesUI(self.preferences)
+        self.about_ui = AboutUI(APP_VERSION, RELEASE_DATE)
 
-        self.addSubInterface(
-            self.qt_package_settings,
-            FIF.SETTING,
-            "Environment & Project Settings",
-            position=NavigationItemPosition.TOP,
-            isTransparent=False,
+        self.navigationInterface.setExpandWidth(200)
+        self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())
+        self.navigationInterface.setMenuButtonVisible(False)
+        self._navigation_labels = (
+            (self.qt_package_settings, icons.PROJECT_SETUP, "Project Setup", NavigationItemPosition.TOP),
+            (self.qt_package_project, icons.PACKAGING, "Packaging", NavigationItemPosition.TOP),
+            (self.preferences_ui, icons.SETTINGS, "Settings", NavigationItemPosition.BOTTOM),
+            (self.about_ui, icons.ABOUT, "About", NavigationItemPosition.BOTTOM),
         )
-        self.addSubInterface(
-            self.qt_package_project,
-            FIF.APPLICATION,
-            "Package Project",
-            position=NavigationItemPosition.TOP,
-            isTransparent=False,
-        )
-        self.addSubInterface(
-            self.about_ui,
-            FIF.INFO,
-            "About",
-            position=NavigationItemPosition.BOTTOM,
-            isTransparent=False,
-        )
+        for page, icon, label, position in self._navigation_labels:
+            self.addSubInterface(page, icon, tr(label), position=position, isTransparent=True)
+        self.navigationInterface.expand(useAni=False)
+        self.stackedWidget.currentChanged.connect(self._clear_viewed_badge)
 
-        if sys.platform in ["win32"]:
-            setThemeColor(getSystemAccentColor(), save=False)
-            setTheme(Theme.AUTO)
+    def set_packaging_badge(self, level: str | None) -> None:
+        """
+        Mark the packaging item: "attension" while building, "success" or "error" until it is viewed.
+        """
+        if self._packaging_badge is not None:
+            self._packaging_badge.deleteLater()
+            self._packaging_badge = None
+        self._packaging_badge_level = None
+        viewing = self.stackedWidget.currentWidget() is self.qt_package_project
+        if level is None or (viewing and level != "attension"):
+            return
+        item = self.navigationInterface.widget(self.qt_package_project.objectName())
+        self._packaging_badge = getattr(DotInfoBadge, level)(item.parent(), item, InfoBadgePosition.NAVIGATION_ITEM)
+        self._packaging_badge.show()
+        self._packaging_badge_level = level
+
+    def _clear_viewed_badge(self) -> None:
+        viewing = self.stackedWidget.currentWidget() is self.qt_package_project
+        if viewing and self._packaging_badge_level not in (None, "attension"):
+            self.set_packaging_badge(None)
+
+    def closeEvent(self, event) -> None:
+        self.preferences.save_window_geometry(self.saveGeometry())
+        super().closeEvent(event)
+
+    def apply_theme(self, theme: str, scheme: Qt.ColorScheme | None = None) -> None:
+        if theme == "system":
+            if scheme is None:
+                scheme = QApplication.styleHints().colorScheme()
+            if scheme != Qt.ColorScheme.Unknown:
+                theme = "dark" if scheme == Qt.ColorScheme.Dark else "light"
+        setTheme(THEMES[theme], save=False)
+
+    def system_theme_changed(self, scheme: Qt.ColorScheme) -> None:
+        if self.preferences.theme == "system":
+            self.apply_theme("system", scheme)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.LanguageChange:
+            for page, _, label, _ in self._navigation_labels:
+                item = self.navigationInterface.widget(page.objectName())
+                item.setText(tr(label))
+                item.setToolTip(tr(label))
 
 
 if __name__ == "__main__":

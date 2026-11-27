@@ -14,45 +14,136 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-NANO_MARGIN = 5
-SMALL_MARGIN = 10
-MEDIUM_MARGIN = 15
-LARGE_MARGIN = 20
-EXTRA_LARGE_MARGIN = 30
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QBoxLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, CaptionLabel, FluentIconBase, IconWidget, SimpleCardWidget, SmoothScrollArea
 
-SMALL_BORDER_RADIUS = 5
-MEDIUM_BORDER_RADIUS = 10
-LARGE_BORDER_RADIUS = 15
 
-SMALL_ICON_SIZE = 23
-LARGE_ICON_SIZE = 120
+PAGE_CONTENT_WIDTH = 960
+PAGE_MARGIN = 15
+PAGE_SPACING = 8
+SECTION_SPACING = 10
+CARD_INSET = 18
+CARD_VERTICAL_INSET = 14
+FORM_CARD_HEIGHT = 70
+FORM_ICON_SIZE = 20
+ICON_TEXT_SPACING = 20
+CONTROL_SPACING = 10
+CONTROL_HEIGHT = 32
+FORM_FIELD_WIDTH = 320
+ACTION_WIDTH = 154
+COMPACT_ACTION_MIN_WIDTH = 128
+ACTION_ICON_SPACING = 8
+ACTION_HORIZONTAL_PADDING = 24
+TABLE_HEIGHT = 200
+TABLE_HEADER_HEIGHT = 42
+SECONDARY_TEXT_LIGHT = "#5d5d5d"
+SECONDARY_TEXT_DARK = "#cfcfcf"
 
-SMALL_BUTTON_WIDTH = 100
-MEDIUM_BUTTON_WIDTH = 120
-LARGE_BUTTON_WIDTH = 160
 
-SMALL_EDIT_WIDTH = 150
-MEDIUM_EDIT_WIDTH = 250
-LARGE_EDIT_WIDTH = 350
-XLARGE_EDIT_WIDTH = 500
+class ElidedLabel(BodyLabel):
+    """
+    Body text that shortens in the middle to fit its width and shows the full text as a tooltip.
+    """
 
-SMALL_COMBOBOX_WIDTH = 120
-MEDIUM_COMBOBOX_WIDTH = 170
-LARGE_COMBOBOX_WIDTH = 220
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._full_text = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
-SMALL_LABEL_WIDTH = 120
-MEDIUM_LABEL_WIDTH = 180
-LARGE_LABEL_WIDTH = 200
+    def setText(self, text: str) -> None:
+        self._full_text = text
+        self.setToolTip(text)
+        self._elide()
 
-IMAGE_WIDTH = 640
-IMAGE_HEIGHT = 360
+    def text(self) -> str:
+        return self._full_text
 
-TABLE_WIDTH = 640
-TABLE_HEIGHT = 360
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide()
 
-PROGRESS_BAR_WIDTH = 630
+    def _elide(self) -> None:
+        metrics = self.fontMetrics()
+        super().setText(metrics.elidedText(self._full_text, Qt.TextElideMode.ElideMiddle, max(self.width(), 0)))
 
-NAVIGATION_BAR_WIDTH = 322
-NAVIGATION_MIN_EXPAND_WIDTH = 1007
 
-STYLE_SHEET = "SpinBox {min-width: 65px;} ComboBox {min-width: 110px;} PushButton {min-width: 105px;} DoubleSpinBox {min-width: 65px;}"
+def page_content_layout(page: QWidget) -> QVBoxLayout:
+    scroll = SmoothScrollArea(page)
+    scroll.setWidgetResizable(True)
+    scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+    scroll.enableTransparentBackground()
+    content = QWidget()
+    content.setMaximumWidth(PAGE_CONTENT_WIDTH)
+    scroll.setWidget(content)
+    content.setAutoFillBackground(False)
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
+    layout.setSpacing(PAGE_SPACING)
+    QVBoxLayout(page).addWidget(scroll)
+    return layout
+
+
+def set_card_padding(layout: QBoxLayout) -> None:
+    layout.setContentsMargins(CARD_INSET, CARD_VERTICAL_INSET, CARD_INSET, CARD_VERTICAL_INSET)
+    layout.setSpacing(CONTROL_SPACING)
+
+
+def form_row(
+    icon: FluentIconBase, title: QWidget, *controls: QWidget, caption: CaptionLabel | None = None
+) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(0)
+    icon_widget = IconWidget(icon)
+    icon_widget.setFixedSize(FORM_ICON_SIZE, FORM_ICON_SIZE)
+    row.addWidget(icon_widget, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addSpacing(ICON_TEXT_SPACING)
+
+    if caption is None:
+        row.addWidget(title, 0, Qt.AlignmentFlag.AlignVCenter)
+    else:
+        caption.setTextColor(light=SECONDARY_TEXT_LIGHT, dark=SECONDARY_TEXT_DARK)
+        text = QWidget()
+        labels = QVBoxLayout(text)
+        labels.setSpacing(0)
+        labels.setContentsMargins(0, 0, 0, 0)
+        labels.addWidget(title)
+        labels.addWidget(caption)
+        row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addStretch(1)
+    for control in controls:
+        row.addSpacing(CONTROL_SPACING)
+        row.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+    return row
+
+
+def form_card(row: QHBoxLayout) -> SimpleCardWidget:
+    card = SimpleCardWidget()
+    card.setFixedHeight(FORM_CARD_HEIGHT)
+    row.setContentsMargins(CARD_INSET, 0, CARD_INSET, 0)
+    card.setLayout(row)
+    return card
+
+
+def centered_actions(*buttons: QWidget) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(CONTROL_SPACING)
+    row.addStretch(1)
+    for button in buttons:
+        row.addWidget(button)
+    row.addStretch(1)
+    return row
+
+
+def action_button_width(button, texts=None, *, icon_width: int | None = None) -> int:
+    """Fit translated text and an icon with compact, consistent horizontal padding."""
+    if texts is None:
+        texts = (button.text(),)
+    if icon_width is None:
+        icon_width = 0 if button.icon().isNull() else button.iconSize().width()
+    content = max((button.fontMetrics().horizontalAdvance(text) for text in texts), default=0)
+    if icon_width:
+        content += icon_width + ACTION_ICON_SPACING
+    return max(COMPACT_ACTION_MIN_WIDTH, content + ACTION_HORIZONTAL_PADDING, button.minimumSizeHint().width())
