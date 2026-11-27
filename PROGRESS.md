@@ -16,22 +16,24 @@
 
 - 当前整合源码在项目 `PyQt6` 环境与独立 Python 3.11 `.venv` 中均通过 **116 条回归**，各为 0 失败、0 错误；`src/`、`tests/` 和 `packaging/` 的语法检查通过。记录为 `logs/final-ui-tests-incremental-final-conda.txt` 与 `logs/final-ui-tests-incremental-final-venv.txt`。
 - 更新专项 34 条覆盖全量必需、可选增量、目标清单、运行环境与基线门禁，以及增量网络/超时/长度/SHA 失败后一次全量回退。增量生成器 12 条回归及 Inno 6/7 的全量和增量小包实际编译已通过。
-- 独立 helper 的 10 个真实 Inno 场景全部通过：正常增量与卸载、新增/变化/删除文件、等待退出、基线不符、ZIP 摘要/路径/重复/尺寸拒绝、部分安装失败恢复、早期坏 ZIP 后全量部分失败的已知新增文件清理，以及文件锁下恢复失败后全量接管和最终恢复。HKCU64 卸载注册与 QSettings 均恢复原快照，所有测试安装已卸载。记录为 `logs/delta-verification-ypxheqeh/summary.json`。
+- 独立 helper 在合成 C# 应用上的 10 个真实 Inno 场景全部通过：正常增量与卸载、新增/变化/删除文件、等待退出、基线不符、ZIP 摘要/路径/重复/尺寸拒绝、部分安装失败恢复、早期坏 ZIP 后全量部分失败的已知新增文件清理，以及文件锁下恢复失败后全量接管和最终恢复。这些不是实际 Qt Package Tool 的跨版本升级验证。HKCU64 卸载注册与 QSettings 均恢复原快照，所有测试安装已卸载。记录为 `logs/delta-verification-ypxheqeh/summary.json`。
 - 独立 .NET helper 已完成真实 GitHub/CDN HTTPS 传输与 94,807,667 字节完整 SHA-256 校验，仅作传输验证，未执行旧 ZIP。记录为 `logs/helper-network-verification-summary.json`；当前 C# 源码摘要为 `e810cb86…2f53d`。
 - 单按钮专项现共 12 条并已通过，覆盖操作分派、真实下载比例与圆弧绘制、动画暂停/恢复及空闲停转、安装门禁、语言刷新、精确中文按钮文字、无额外失败行、检查/下载/更新失败双回调来源，以及文字状态图标、关于页跨语言/状态等宽和打包页紧凑等宽、英文内容容纳。新增焦点回归逐像素确认普通/鼠标/键盘焦点下按钮外观相同，并验证 Space 仍能发起检查。
 - 本机界面实测：关于页 GitHub/更新按钮中文均为 128、英文均为 163 逻辑像素；打包页按钮中文均为 134、英文均为 180。中文已小于旧版 184，英文宽度满足实际内容尺寸；语言和状态切换后配对宽度保持一致。
 - 新界面已完成 40 种中英文、浅深主题及更新状态组合截图，并检查旋转动画、25%/50%/75% 下载圆环和按钮位置。截图位于 `logs/update-button-ui/`。
-- qmake/CMake × Release/Debug 的 4 个真实 Qt 6.5.3 MinGW 产物已通过构建、部署、发布、5 个阶段信号、自动清理和仅系统 PATH 启动。此前 Qt 5.15.2 x86 与 Qt 6.5.3 x64 的 Widgets/Quick 共 8 个 Release/Debug 产物也完成运行验证。
+- 源码协调器驱动的 qmake/CMake × Release/Debug 共 4 个真实 Qt 6.5.3 MinGW 产物已通过构建、部署、发布、5 个阶段信号、自动清理和仅系统 PATH 启动；最终安装版内的同一四组合仍待复验。此前 Qt 5.15.2 x86 与 Qt 6.5.3 x64 的 Widgets/Quick 共 8 个 Release/Debug 产物也完成运行验证。
 - 依赖清单的 17 个锁定包已独立安装并通过 `pip check`。Python 3.11 使用 NumPy 2.4.6、SciPy 1.17.1、PyQt6/Qt 6.12.1 和 Nuitka 4.4；图像处理、PNG 读写、Windows Job Object 导入、HTTPS 查询、资源路径和源码正常退出均已验证。
 - 最终 Nuitka 4.4/Inno 7.1.1 分发包已完成系统 PATH 下启动、默认 Schannel/TLS 1.3、GitHub API/CDN、`_ctypes`/`ffi.dll`、qwindows 和 Qt 中文菜单验证。中文空格目录中的安装、精确受管清单及 helper 校验、等待正常退出、覆盖升级、静默重启与卸载全部通过；用户设置的注册表导出逐字节一致，测试卸载注册已清除。完整报告为 `logs/packaging-verification-summary.json`。
 - 最终全量安装包为 62,919,325 字节，SHA-256 `be5ec67641e8805135187b516ed2085456d0f56992d13dec61c8e6f81612bf57`；随包及发布附件的 `QtPackageTool-files.json` 完全一致，构建输入摘要 `01ac1c3f…9c7a`。
 - 详细测试、构建、安装器和下载摘要保存在 Git 忽略的 `logs/` 下；过往逐项修复记录以 Git 与发布记录为准。
 
-## 发布结果
+## 发布状态与待完成验证
 
-- [v1.0.0](https://github.com/NCFXZ/QtPackageTool/releases/tag/v1.0.0) 已发布为 Latest，安装包和基线清单两个附件的 GitHub 大小及 SHA-256 均与本地验证产物一致。首版全量安装建立基线，后续版本可生成匹配增量。
-- 实际更新服务已从公开 Latest 完整下载 62,919,325 字节安装包并复验 SHA-256；模拟较旧版本正常进入可用/下载/就绪，当前 `1.0.0` 查询返回已是最新。记录为 `logs/release-live-download-verified.json`。
+- 已按用户要求将 `v1.0.0`（Release `460913792`）撤回为草稿，安装包和基线清单两个附件保留在私有草稿中。公开 Release API、两个附件下载均返回 404，公开 Release 列表为空；Git 标签页仍保留源码标签，不提供安装包或清单。撤回验证记录为 `logs/release-withdrawal-verified.json`。源码提交、tag 和本地安装包保持不变。
+- 撤回前，实际更新服务曾从公开 Latest 完整下载 62,919,325 字节安装包并复验 SHA-256；模拟较旧版本正常进入可用/下载/就绪，当时 `1.0.0` 查询返回已是最新。此项为撤回前的历史结果，记录为 `logs/release-live-download-verified.json`。
 - 已删除 6 个旧 Beta Release（`v0.9.0`、`v0.8.1`、`v0.8.0`、`v0.7.2`、`v0.7.1`、`v0.7.0` 的 `-Beta` 发布），保留 Git tags 和提交历史。源码与 `v1.0.0` 标签已推送至 `main`，工作目录保持原位置。
+- 待补验证：实际 Qt Package Tool 跨版本增量升级与故障场景下的全量回退；最终安装版内 qmake/CMake × Release/Debug 四组合；干净 Windows 环境的安装、启动、更新及卸载；真实 MSVC 工具链构建。现有合成、源码和本机验证不替代这些覆盖缺口。
+- **重新发布须用户明确确认；在此之前保持草稿，不自动重新发布。**
 
 ## 验证边界
 
