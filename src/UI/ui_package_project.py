@@ -29,6 +29,7 @@ from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
+    PrimaryPushButton,
     ProgressBar,
     PushButton,
     SimpleCardWidget,
@@ -56,6 +57,7 @@ SUMMARY_FIELDS = (
 
 class QtPackageProjectUI(LocalizedPage):
     notify = pyqtSignal(int, str)
+    packaging_requested = pyqtSignal()
 
     def __init__(self):
         """
@@ -145,17 +147,24 @@ class QtPackageProjectUI(LocalizedPage):
         self.package_terminal.textChanged.connect(self._update_log_actions)
         self._update_log_actions()
 
-        self.package_toggle_button = PushButton(self)
-        self.set_packaging_action("Start Packaging")
+        # Start is the accented main action; stopping swaps in a plain button in the same place.
+        self.package_start_button = self.localized(
+            PrimaryPushButton(icons.START_PACKAGING, "", self), "Start Packaging"
+        )
+        self.package_stop_button = PushButton(icons.STOP_PACKAGING, "", self)
+        for button in (self.package_start_button, self.package_stop_button):
+            button.clicked.connect(self.packaging_requested)
         self.package_folder_button = self.localized(
             PushButton(icons.OPEN_PACKAGE_FOLDER, "", self), "Open Package Folder"
         )
         self.package_folder_button.setDisabled(True)
-        self._sync_action_widths()
+        self.set_packaging_action("Start Packaging")
 
         package_layout.addLayout(header_row)
         package_layout.addWidget(self.package_terminal, 1)
-        package_layout.addLayout(ls.centered_actions(self.package_toggle_button, self.package_folder_button))
+        package_layout.addLayout(ls.centered_actions(
+            self.package_start_button, self.package_stop_button, self.package_folder_button
+        ))
 
         # Main Layout
         layout.addWidget(main_label)
@@ -172,7 +181,12 @@ class QtPackageProjectUI(LocalizedPage):
 
     def _refresh_summary(self) -> None:
         for key, label in self._summary_labels.items():
-            label.setText(self._summary[key] or tr("Not selected"))
+            value = self._summary[key]
+            label.setText(value or tr("Not selected"))
+            if value:
+                label.setTextColor(light=ls.DEFAULT_TEXT_LIGHT, dark=ls.DEFAULT_TEXT_DARK)
+            else:
+                label.setTextColor(light=ls.CAUTION_TEXT_LIGHT, dark=ls.CAUTION_TEXT_DARK)
 
     def _update_log_actions(self) -> None:
         has_log = not self.package_terminal.document().isEmpty()
@@ -199,21 +213,29 @@ class QtPackageProjectUI(LocalizedPage):
     def clear_log(self) -> None:
         self.package_terminal.clear()
 
+    @property
+    def package_toggle_button(self) -> PushButton:
+        """The start or stop button that is currently shown."""
+        return self.package_start_button if self._packaging_action == "Start Packaging" else self.package_stop_button
+
     def set_packaging_action(self, source: str) -> None:
+        """Show "Start Packaging", "Stop Packaging" or the disabled "Stopping..." action."""
         self._packaging_action = source
-        self.package_toggle_button.setText(tr(source))
-        icon = icons.START_PACKAGING if source == "Start Packaging" else icons.STOP_PACKAGING
-        self.package_toggle_button.setIcon(icon)
-        if hasattr(self, "package_folder_button"):
-            self._sync_action_widths()
+        starting = source == "Start Packaging"
+        # Keep the hidden stop button in the current language so its size hint stays accurate.
+        self.package_stop_button.setText(tr("Stop Packaging" if starting else source))
+        self.package_stop_button.setEnabled(source != "Stopping...")
+        self.package_start_button.setVisible(starting)
+        self.package_stop_button.setVisible(not starting)
+        self._sync_action_widths()
 
     def _sync_action_widths(self) -> None:
         actions = (tr("Start Packaging"), tr("Stop Packaging"), tr("Stopping..."))
         width = max(
-            ls.action_button_width(self.package_toggle_button, actions),
+            ls.action_button_width(self.package_stop_button, actions),
             ls.action_button_width(self.package_folder_button),
         )
-        for button in (self.package_toggle_button, self.package_folder_button):
+        for button in (self.package_start_button, self.package_stop_button, self.package_folder_button):
             button.setFixedSize(width, ls.CONTROL_HEIGHT)
 
     def set_packaging_progress(

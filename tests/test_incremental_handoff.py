@@ -72,6 +72,18 @@ class IncrementalHandoffTests(unittest.TestCase):
             start.assert_not_called()
         self.assertEqual(list(self.work.iterdir()), [self.archive])
 
+    def test_deep_or_invalid_manifest_fails_with_a_handled_value_error(self):
+        manifest = self.app_dir / FILE_MANIFEST_NAME
+        for value in (
+            "[" * 2000 + "0" + "]" * 2000,
+            json.dumps({**self.manifest, "schema": True}),
+        ):
+            with self.subTest(value=value[:60]), patch("app.installer.QProcess.startDetached") as start:
+                manifest.write_text(value, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    launch_delta_update(self.archive, self.release, self.app_dir, 42)
+                start.assert_not_called()
+
     def test_failed_process_creation_cleans_only_created_helper_files(self):
         unrelated = self.work / "user.txt"
         unrelated.write_text("preserve", encoding="utf-8")

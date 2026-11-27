@@ -7,10 +7,29 @@ from pathlib import Path
 
 from loguru import logger
 
+from .metadata import APP_USER_MODEL_ID
+
 
 IS_COMPILED = bool(getattr(__main__, "__compiled__", False))
 APP_DIR = Path(__file__).parents[1] if IS_COMPILED else Path(__file__).parents[2]
 RESOURCE_DIR = APP_DIR / "resource"
+
+
+def configure_windows_identity() -> None:
+    """Give source and packaged windows the same stable taskbar identity as shortcuts."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        set_app_id = ctypes.WinDLL("shell32").SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = (ctypes.c_wchar_p,)
+        set_app_id.restype = ctypes.c_long
+        result = set_app_id(APP_USER_MODEL_ID)
+        if result != 0:
+            logger.warning("Could not set the taskbar application identity: HRESULT {:#x}", result & 0xffffffff)
+    except OSError as error:
+        logger.warning("Could not set the taskbar application identity: {}", error)
 
 
 def configure_logging() -> None:

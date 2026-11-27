@@ -205,9 +205,7 @@ class QtPackage(QWidget):
         self.ui.qt_package_settings.output_path_button.clicked.connect(
             self.select_output_directory
         )
-        self.ui.qt_package_project.package_toggle_button.clicked.connect(
-            self.packaging_toggle
-        )
+        self.ui.qt_package_project.packaging_requested.connect(self.packaging_toggle)
         self.ui.qt_package_project.package_folder_button.clicked.connect(
             self.open_build_folder
         )
@@ -613,7 +611,6 @@ class QtPackage(QWidget):
             self._cancel_requested.emit()
             page = self.ui.qt_package_project
             page.set_packaging_action("Stopping...")
-            page.package_toggle_button.setEnabled(False)
             page.set_packaging_progress("Stopping...")
 
     def eventFilter(self, watched, event) -> bool:
@@ -637,7 +634,6 @@ class QtPackage(QWidget):
         self.is_compiling = running
         page = self.ui.qt_package_project
         page.set_packaging_action("Stop Packaging" if running else "Start Packaging")
-        page.package_toggle_button.setEnabled(True)
         self.ui.qt_package_settings.setDisabled(running)
         self.ui.preferences_ui.language_combo.setDisabled(running)
         self.ui.about_ui.set_update_install_allowed(

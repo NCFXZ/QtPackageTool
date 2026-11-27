@@ -30,13 +30,14 @@ internal static class Program
     const long MaxTotal = 4L * 1024 * 1024 * 1024;
     const int MaxJson = 1024 * 1024;
     static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
-    static readonly Regex VersionPattern = new Regex(@"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", RegexOptions.CultureInvariant);
-    static readonly Regex HashPattern = new Regex(@"^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
-    static readonly Regex UninstallerPattern = new Regex(@"^unins[0-9]{3}\.(exe|dat|msg)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    static readonly Regex VersionPattern = new Regex(@"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z", RegexOptions.CultureInvariant);
+    static readonly Regex HashPattern = new Regex(@"\A[a-f0-9]{64}\z", RegexOptions.CultureInvariant);
+    static readonly Regex UninstallerPattern = new Regex(@"\Aunins[0-9]{3}\.(exe|dat|msg)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = MaxJson, RecursionLimit = 32 };
     static readonly Dictionary<string, string> Messages = new Dictionary<string, string> {
         { "title", "Qt Package Tool Update" },
         { "failure", "The update could not be completed. Download the full installer and try again." },
+        { "conflict", "The update was stopped to protect existing files in the installation folder. Move the conflicting files or folders elsewhere, then check for updates again." },
         { "restart_failure", "The update was installed, but the application could not be started. Start Qt Package Tool manually." },
         { "diagnostics", "Diagnostics" }
     };
@@ -58,6 +59,11 @@ internal static class Program
     static Backup BackupState;
     static Manifest TargetManifest;
     static readonly HashSet<string> TargetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    sealed class UserFileConflictException : IOException
+    {
+        internal UserFileConflictException(string path) : base("An existing file or folder conflicts with the update: " + path) { }
+    }
 
     sealed class FileEntry
     {
@@ -101,6 +107,7 @@ internal static class Program
         Mutex worker = null;
         bool owned = false;
         bool success = false;
+        bool conflict = false;
         string failure = null;
         try
         {
@@ -125,6 +132,7 @@ internal static class Program
                 ApplyDelta();
                 success = true;
             }
+            catch (UserFileConflictException) { throw; }
             catch (Exception deltaFailure)
             {
                 Log("delta_failed", deltaFailure.Message);
@@ -158,12 +166,13 @@ internal static class Program
                 try
                 {
                     Manifest expectedTarget = ObtainTargetManifest();
+                    PreflightTarget(expectedTarget);
                     string full = ObtainFullInstaller();
+                    PreflightTarget(expectedTarget);
                     RunInstaller(full, "full");
                     Manifest installed = ReadManifest(System.IO.Path.Combine(AppDir, ManifestName));
                     if (installed.Version != TargetVersion)
                         throw new InvalidDataException("The full installer has the wrong target version.");
-                    TargetPaths.UnionWith(installed.Files.Keys);
                     if (BackupState != null && BackupState.Complete)
                         foreach (string previous in BackupState.Baseline.Files.Keys)
                             if (!installed.Files.ContainsKey(previous))
@@ -171,6 +180,7 @@ internal static class Program
                     VerifyTarget(expectedTarget);
                     success = true;
                 }
+                catch (UserFileConflictException) { throw; }
                 catch (Exception fullFailure)
                 {
                     Log("full_failed", fullFailure.Message);
@@ -188,6 +198,7 @@ internal static class Program
         }
         catch (Exception error)
         {
+            conflict = error is UserFileConflictException;
             failure = error.Message;
             Log("failed", failure);
             if (WorkDir != null)
@@ -221,8 +232,8 @@ internal static class Program
                 return 1;
             }
         }
-        MessageBox.Show(Messages["failure"] + "\n\n" + failure +
-            "\n\n" + (FullUrl ?? "https://github.com/NCFXZ/QtPackageTool/releases/latest") +
+        MessageBox.Show(Messages[conflict ? "conflict" : "failure"] + "\n\n" + failure +
+            (conflict ? "" : "\n\n" + (FullUrl ?? "https://github.com/NCFXZ/QtPackageTool/releases/latest")) +
             (WorkDir == null ? "" : "\n\n" + Messages["diagnostics"] + ": " + WorkDir),
             Messages["title"], MessageBoxButtons.OK, MessageBoxIcon.Error);
         return 1;
@@ -343,13 +354,14 @@ internal static class Program
         if (TargetManifest.Version != TargetVersion || TargetManifest.Hash != HashValue(metadata, "target_manifest_sha256") ||
             TargetManifest.Hash != FileManifestHash || new FileInfo(System.IO.Path.Combine(extracted, "files.json")).Length != FileManifestSize)
             throw new InvalidDataException("The target file manifest does not match the delta.");
-        TargetPaths.UnionWith(TargetManifest.Files.Keys);
         Manifest baseline = ReadManifest(System.IO.Path.Combine(AppDir, ManifestName));
         if (baseline.Version != BaseVersion || baseline.Hash != HashValue(metadata, "base_manifest_sha256"))
             throw new InvalidDataException("The installed baseline does not match this delta.");
         VerifyFiles(baseline);
         Stage("baseline_verified");
+        PreflightTarget(TargetManifest);
         CreateBackup(baseline);
+        PreflightTarget(TargetManifest);
         RunInstaller(System.IO.Path.Combine(extracted, "installer.exe"), "delta");
         VerifyTarget(TargetManifest);
         Stage("delta_verified");
@@ -401,10 +413,33 @@ internal static class Program
             VerifyAsset(AppPath(file.Path), file.Size, file.Hash);
     }
 
+    static void PreflightTarget(Manifest target)
+    {
+        // Ownership comes from the installed manifest, even when a payload hash needs a full repair.
+        Manifest baseline = BackupState == null ? ReadManifest(System.IO.Path.Combine(AppDir, ManifestName)) : BackupState.Baseline;
+        if (baseline.Version != BaseVersion)
+            throw new UserFileConflictException(ManifestName);
+        foreach (string relative in target.Files.Keys)
+        {
+            string destination = AppPath(relative);
+            if (Directory.Exists(destination) || (!baseline.Files.ContainsKey(relative) && File.Exists(destination)))
+                throw new UserFileConflictException(relative);
+            string parent = System.IO.Path.GetDirectoryName(destination);
+            while (!parent.Equals(AppDir, StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(parent))
+                    throw new UserFileConflictException(parent);
+                parent = System.IO.Path.GetDirectoryName(parent);
+            }
+        }
+        // A failed preflight must never make unknown user paths eligible for rollback deletion.
+        TargetPaths.UnionWith(target.Files.Keys);
+        Stage("target_paths_verified");
+    }
+
     static void VerifyTarget(Manifest expected)
     {
         Manifest installed = ReadManifest(System.IO.Path.Combine(AppDir, ManifestName));
-        TargetPaths.UnionWith(installed.Files.Keys);
         if (installed.Version != TargetVersion || (expected != null && installed.Hash != expected.Hash))
             throw new InvalidDataException("The installed target manifest does not match the requested update.");
         VerifyFiles(installed);
@@ -581,7 +616,6 @@ internal static class Program
     {
         if (TargetManifest != null && TargetManifest.Hash == FileManifestHash && TargetManifest.Version == TargetVersion)
         {
-            TargetPaths.UnionWith(TargetManifest.Files.Keys);
             return TargetManifest;
         }
         string cached = System.IO.Path.Combine(WorkDir, ManifestName);
@@ -597,7 +631,6 @@ internal static class Program
         if (target.Version != TargetVersion || target.Hash != FileManifestHash)
             throw new InvalidDataException("The published file manifest has the wrong target version.");
         TargetManifest = target;
-        TargetPaths.UnionWith(target.Files.Keys);
         Stage("full_manifest_verified");
         return target;
     }
@@ -717,7 +750,7 @@ internal static class Program
         foreach (string part in path.Split('/'))
         {
             if (part == "" || part == "." || part == ".." || part.EndsWith(".") || part.EndsWith(" ") ||
-                Regex.IsMatch(part.Split('.')[0], @"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                Regex.IsMatch(part.Split('.')[0].TrimEnd(' '), @"\A(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 throw new InvalidDataException("The manifest contains an unsafe Windows path.");
         }
         return path;
@@ -725,7 +758,7 @@ internal static class Program
 
     static string Absolute(string path)
     {
-        if (String.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathRooted(path) || path.StartsWith(@"\\") || path.IndexOf('"') >= 0)
+        if (String.IsNullOrWhiteSpace(path) || !Regex.IsMatch(path, @"\A[A-Za-z]:[\\/]") || path.IndexOf('"') >= 0)
             throw new InvalidDataException("Update paths must be absolute local paths.");
         string full = System.IO.Path.GetFullPath(path);
         if (full.TrimEnd('\\', '/').Equals(System.IO.Path.GetPathRoot(full).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))

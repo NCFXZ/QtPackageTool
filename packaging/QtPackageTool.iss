@@ -50,23 +50,22 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 #ifdef DeltaUpdate
 #include DeltaEntries
 #else
-[Files]
-Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#include PayloadFilesInclude
 
-[InstallDelete]
-; This directory contains only plugins supplied by the application build.
-Type: filesandordirs; Name: "{app}\PyQt6\Qt6\plugins"
 #endif
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\QtPackageTool.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\QtPackageTool.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\QtPackageTool.exe"; AppUserModelID: "{#AppUserModelID}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\QtPackageTool.exe"; Tasks: desktopicon; AppUserModelID: "{#AppUserModelID}"
 
 [Run]
 Filename: "{app}\QtPackageTool.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent; Check: not RestartRequested
 Filename: "{app}\QtPackageTool.exe"; Flags: nowait; Check: RestartRequested
 
 [Code]
+#include ManagedPathsInclude
+#include "managed_paths.iss"
+
 const
   SynchronizeAccess = $00100000;
   WaitSignaled = 0;

@@ -31,6 +31,7 @@ def input_digest() -> str:
         "resource/i18n/zh_CN.qm", "LICENSE", "requirements.txt",
         "packaging/build_windows.py", "packaging/nuitka-package.config.yml",
         "packaging/qt6.conf", "packaging/QtPackageTool.iss", "packaging/delta.py",
+        "packaging/managed_paths.iss",
         "packaging/updater/Program.cs",
     ))
     digest = hashlib.sha256()

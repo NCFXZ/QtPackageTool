@@ -18,8 +18,9 @@ Qt Package Tool 是一个 Windows 桌面工具，用于编译和部署基于 qma
 | `resource/config/` | 随程序分发的 Qt 库与附属 QML 模块关联配置。 |
 | `resource/i18n/` | 简体中文 Qt 翻译源文件和运行时词条文件。 |
 | `resource/images/` | 窗口、关于页和托盘用的 PNG 图标，以及供 Windows 应用打包使用的 ICO 图标。 |
-| `tests/` | 语言与偏好保存、图标唯一性、工具链发现和配对、MSVC 环境、工具链缓存、qmake 与 CMake 构建流程、依赖及 QML 发布校验的回归测试。 |
+| `tests/` | 语言与偏好保存、图标唯一性、工具链发现和配对、MSVC 环境、工具链缓存、qmake 与 CMake 构建流程、依赖及 QML 发布校验、页面布局规则的回归测试。 |
 | `packaging/` | Windows x64 Nuitka standalone、文件清单、Inno 全量/增量包与 DLL 分发配置。`updater/` 保存独立更新进程的 C# 源码。 |
+| `docs/` | 版本验收记录，区分源码、合成安装、真实安装版和隔离 Windows 的测试结果。 |
 | `logs/` | 源码运行时优先使用的日志目录，由 Git 忽略。发布版使用 `%LOCALAPPDATA%\QtPackageTool\logs`。 |
 | `README.md`、`AGENTS.md`、`PROGRESS.md` | 项目简介、维护指南和当前进度。 |
 | `requirements.txt`、`LICENSE`、`.gitignore` | Python 依赖版本、许可证和 Git 忽略规则。 |

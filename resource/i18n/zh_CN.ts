@@ -76,10 +76,6 @@
       <translation>构建文件夹不存在：{path}</translation>
     </message>
     <message>
-      <source>Build Options</source>
-      <translation>构建选项</translation>
-    </message>
-    <message>
       <source>Choose an installed Qt dependency.</source>
       <translation>请选择已安装的 Qt 依赖。</translation>
     </message>
@@ -444,8 +440,8 @@
       <translation>日志已保存。</translation>
     </message>
     <message>
-      <source>Drop files or folders here, or use the buttons below</source>
-      <translation>将文件或文件夹拖到此处，或使用下方按钮添加</translation>
+      <source>Drop files or folders here, or use the buttons above</source>
+      <translation>将文件或文件夹拖到此处，或使用上方按钮添加</translation>
     </message>
     <message>
       <source>Search for a dependency above and import it</source>
@@ -730,6 +726,10 @@
     <message>
       <source>Diagnostics</source>
       <translation>诊断记录</translation>
+    </message>
+    <message>
+      <source>The update was stopped to protect existing files in the installation folder. Move the conflicting files or folders elsewhere, then check for updates again.</source>
+      <translation>为保护安装目录中已有的文件，更新已停止。请先将冲突的文件或文件夹移至其他位置，再重新检查更新</translation>
     </message>
   </context>
 </TS>

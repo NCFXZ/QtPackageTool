@@ -42,7 +42,8 @@ class IncrementalPackagingTests(unittest.TestCase):
 
     def test_paths_reject_windows_aliases_and_traversal(self):
         for path in ("../x", "/x", "a//b", "a/./b", "a\\b", "C:/x", "a:stream", "con", "COM1.txt",
-                     "lpt².dll", "a./b", "a /b", "a\x00b", "a?b", "a/{#Injected}"):
+                     "lpt².dll", "CON .txt", "AUX .json", "COM1 .log", "LPT¹ .txt",
+                     "a./b", "a /b", "a\x00b", "a?b", "a/{#Injected}"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 delta.validate_path(path)
         self.assertEqual(delta.validate_path("resource/中文 space/{literal}.json"), "resource/中文 space/{literal}.json")
@@ -180,6 +181,25 @@ class IncrementalPackagingTests(unittest.TestCase):
         target = delta.write_manifest(self.bundle, "1.0.1")
         with self.assertRaisesRegex(ValueError, "replace a file"):
             delta.build_delta(base, target, self.bundle, self.values, Path("ISCC.exe"), self.root)
+
+    def test_full_payload_installs_only_manifest_owned_files(self):
+        (self.bundle / "unins001.exe").write_bytes(b"must never be bundled or overwritten")
+        delta.write_manifest(self.bundle, "1.0.1")
+        output = self.root / "full-output"
+        def compile_fixture(command, **kwargs):
+            (output / self.values["INSTALLER_NAME"]).write_bytes(b"MZ fixture")
+        with patch.object(delta.subprocess, "run", side_effect=compile_fixture) as compiler:
+            delta.compile_installer(self.bundle, self.values, Path("ISCC.exe"), output)
+        payload = next(output.glob("*-files.iss")).read_text(encoding="utf-8-sig")
+        self.assertIn("QtPackageTool.exe", payload)
+        self.assertIn(delta.MANIFEST_NAME, payload)
+        self.assertNotIn("unins001.exe", payload)
+        self.assertIn("/DAppUserModelID=NCFXZ.QtPackageTool", compiler.call_args.args[0])
+
+    def test_installer_version_must_match_manifest(self):
+        delta.write_manifest(self.bundle, "1.0.0")
+        with self.assertRaisesRegex(ValueError, "manifest version"):
+            delta.compile_installer(self.bundle, self.values, Path("ISCC.exe"), self.root / "full-output")
 
 
 if __name__ == "__main__":

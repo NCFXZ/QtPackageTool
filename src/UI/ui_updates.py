@@ -3,7 +3,9 @@
 from PyQt6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QPropertyAnimation, QRectF, QSize, Qt, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QAbstractButton, QVBoxLayout
-from qfluentwidgets import CaptionLabel, TextBrowser, Theme, setFont
+from qfluentwidgets import (
+    CaptionLabel, FluentIconBase, TextBrowser, Theme, ThemeColor, isDarkTheme, qconfig, setFont,
+)
 
 from UI import ui_icons as icons
 from UI import ui_layout_settings as ls
@@ -33,6 +35,10 @@ class UpdateActionButton(QAbstractButton):
         self._animation.setDuration(1000)
         self._animation.setLoopCount(-1)
         self._animation.setEasingCurve(QEasingCurve.Type.Linear)
+        self._fluent_icon = None
+        # Follow the theme colour (the Windows accent) and light/dark switches like other primary buttons.
+        qconfig.themeChanged.connect(self._theme_changed)
+        qconfig.themeColorChanged.connect(self._theme_changed)
 
     @pyqtProperty(float)
     def rotation(self) -> float:
@@ -91,21 +97,49 @@ class UpdateActionButton(QAbstractButton):
         super().leaveEvent(event)
         self.update()
 
+    def set_fluent_icon(self, icon: FluentIconBase | None) -> None:
+        self._fluent_icon = icon
+        self._sync_icon()
+
+    def _sync_icon(self) -> None:
+        icon = self._fluent_icon
+        self.setIcon(icon.icon(Theme.LIGHT, color=self.foreground_color()) if icon else QIcon())
+
+    def _theme_changed(self, *_) -> None:
+        self._sync_icon()
+        self.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self._sync_icon()
+
+    def foreground_color(self) -> QColor:
+        """Text and symbol colour of a Fluent primary button on the current theme colour."""
+        return QColor("#000000" if isDarkTheme() and self.isEnabled() else "#ffffff")
+
+    def _background_color(self) -> QColor:
+        dark = isDarkTheme()
+        if not self.isEnabled():
+            return QColor(52, 52, 52) if dark else QColor(205, 205, 205)
+        if self.isDown():
+            return (ThemeColor.DARK_2 if dark else ThemeColor.LIGHT_3).color()
+        if self.underMouse():
+            return (ThemeColor.DARK_1 if dark else ThemeColor.LIGHT_1).color()
+        return ThemeColor.PRIMARY.color()
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        background = "#a5c5d9"
-        if not self.isEnabled():
-            background = "#92aab8"
-        elif self.isDown():
-            background = "#94bdd3"
-        elif self.underMouse():
-            background = "#b5d3e3"
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(background))
+        painter.setBrush(self._background_color())
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.drawRoundedRect(rect, 5, 5)
-        foreground = QColor("#000000" if self.isEnabled() else "#364c59")
+        if not self.isEnabled():
+            painter.setOpacity(0.43 if isDarkTheme() else 0.9)
+        elif self.isDown():
+            painter.setOpacity(0.63)
+        foreground = self.foreground_color()
         pen = QPen(foreground, 2.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -135,11 +169,7 @@ class UpdateActionButton(QAbstractButton):
                 text_width = self.fontMetrics().horizontalAdvance(self.text())
                 left = center.x() - (icon_width + ls.ACTION_ICON_SPACING + text_width) / 2
                 icon_rect = QRectF(left, center.y() - icon_width / 2, icon_width, icon_width)
-                painter.save()
-                if not self.isEnabled():
-                    painter.setOpacity(0.55)
                 self.icon().paint(painter, icon_rect.toRect())
-                painter.restore()
                 text_rect = QRectF(left + icon_width + ls.ACTION_ICON_SPACING, rect.top(), text_width, rect.height())
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.text())
 
@@ -271,7 +301,7 @@ class UpdatePanel(LocalizedPage):
         else:
             text = name
             icon = icons.UPDATE_CHECK
-        self.action_button.setIcon(icon.icon(Theme.LIGHT, color=QColor("#000000")) if icon else QIcon())
+        self.action_button.set_fluent_icon(icon)
         self.action_button.setText(text)
         self.action_button.setAccessibleName(name)
         self.action_button.setAccessibleDescription(tip)

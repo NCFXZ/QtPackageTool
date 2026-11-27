@@ -297,7 +297,13 @@ internal static class Locker { static int Main(string[] args) {
             result_path = cache / "helper-result.json"
             while process.poll() is None and time.monotonic() < deadline:
                 if result_path.exists():
-                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                    try:
+                        result = json.loads(result_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        # The worker creates this diagnostic before showing its
+                        # failure dialog; wait for its writer to close the file.
+                        time.sleep(0.1)
+                        continue
                     if not result["success"]:
                         close_own_failure_dialog(process.pid)
                 time.sleep(0.1)

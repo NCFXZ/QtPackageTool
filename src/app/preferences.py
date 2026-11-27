@@ -35,7 +35,11 @@ class AppPreferences(QObject):
         saved_theme = self._storage.value("theme", "system", type=str)
         self.theme = saved_theme if saved_theme in THEME_CHOICES else "system"
         saved_jobs = str(self._storage.value("build/jobs", AUTO_JOBS))
-        self.jobs = int(saved_jobs) if saved_jobs.isdecimal() and int(saved_jobs) in JOB_CHOICES else AUTO_JOBS
+        try:
+            jobs = int(saved_jobs) if saved_jobs.isdecimal() else AUTO_JOBS
+        except ValueError:
+            jobs = AUTO_JOBS
+        self.jobs = jobs if jobs in JOB_CHOICES else AUTO_JOBS
         self.auto_download_updates = self._storage.value("updates/autoDownload", True, type=bool)
         if not self._install_language(self.language):
             self.language = "en"
@@ -65,7 +69,7 @@ class AppPreferences(QObject):
     def project_session(self) -> dict:
         try:
             session = json.loads(self._storage.value("project/session", "", type=str) or "{}")
-        except ValueError:
+        except (ValueError, RecursionError):
             return {}
         return session if isinstance(session, dict) else {}
 
@@ -87,7 +91,7 @@ class AppPreferences(QObject):
     def toolchain_cache(self) -> dict:
         try:
             cache = json.loads(self._storage.value("toolchains/cache", "", type=str) or "{}")
-        except ValueError:
+        except (ValueError, RecursionError):
             return {}
         return cache if isinstance(cache, dict) else {}
 

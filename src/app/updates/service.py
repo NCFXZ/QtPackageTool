@@ -48,6 +48,7 @@ class UpdateService(QObject):
         self._received = 0
         self._metadata = bytearray()
         self._redirects = 0
+        self._operation = 0
         self._selected_asset: Asset | None = None
         self._full_fallback_used = False
         self._timer = QTimer(self)
@@ -73,6 +74,8 @@ class UpdateService(QObject):
         if self.state in ("checking", "downloading"):
             return
         self._discard_download()
+        self._operation += 1
+        operation = self._operation
         self._selected_asset = None
         self._full_fallback_used = False
         self.release = None
@@ -80,6 +83,8 @@ class UpdateService(QObject):
         self._metadata.clear()
         self._redirects = 0
         self._set_state("checking")
+        if self.state != "checking" or self._operation != operation:
+            return
         self._timer.start(60000)
         self._request(self._api_url)
 
@@ -125,6 +130,8 @@ class UpdateService(QObject):
         )
 
     def _start_download(self, asset: Asset) -> None:
+        self._operation += 1
+        operation = self._operation
         self._selected_asset = asset
         self._discard_download()
         try:
@@ -140,10 +147,10 @@ class UpdateService(QObject):
         self._redirects = 0
         self.error_message = ""
         self._set_state("downloading")
-        if self.state != "downloading" or self._selected_asset is not asset:
+        if self.state != "downloading" or self._selected_asset is not asset or self._operation != operation:
             return
         self.progress_changed.emit(0, asset.size)
-        if self.state != "downloading" or self._selected_asset is not asset:
+        if self.state != "downloading" or self._selected_asset is not asset or self._operation != operation:
             return
         self._timer.start(15 * 60 * 1000)
         self._request(asset.url)
@@ -241,7 +248,7 @@ class UpdateService(QObject):
         if self.state == "checking":
             try:
                 payload = json.loads(self._metadata)
-            except (UnicodeDecodeError, ValueError):
+            except (ValueError, RecursionError):
                 self._fail("GitHub returned invalid release information.")
                 return
             try:
@@ -249,7 +256,10 @@ class UpdateService(QObject):
             except ValueError as exc:
                 self._fail(str(exc))
                 return
+            operation = self._operation
             self.release_changed.emit(self.release)
+            if self.state != "checking" or self._operation != operation:
+                return
             self._set_state("available" if version_tuple("v" + self.release.version) > self._current_version else "current")
         elif self.state == "downloading":
             self._finish_download()
@@ -325,12 +335,15 @@ class UpdateService(QObject):
         self._timer.stop()
         self._discard_download()
         self.error_message = message
+        operation = self._operation
         self._set_state("error")
-        self.error_occurred.emit(message)
+        if self.state == "error" and self._operation == operation:
+            self.error_occurred.emit(message)
 
     def cancel(self) -> None:
         if self.state not in ("checking", "downloading"):
             return
+        self._operation += 1
         self._close_reply()
         self._timer.stop()
         self._discard_download()

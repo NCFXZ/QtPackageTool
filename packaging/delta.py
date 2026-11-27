@@ -43,7 +43,7 @@ def validate_path(value: str) -> str:
     if any(ord(char) < 32 or char in '\\<>:"|?*' for char in value) or "{#" in value:
         raise ValueError(f"Unsafe managed path: {value!r}")
     for part in value.split("/"):
-        if not part or part in (".", "..") or part.endswith((" ", ".")) or _RESERVED.fullmatch(part.split(".")[0]):
+        if not part or part in (".", "..") or part.endswith((" ", ".")) or _RESERVED.fullmatch(part.split(".")[0].rstrip(" ")):
             raise ValueError(f"Unsafe managed path: {value!r}")
     return value
 
@@ -193,10 +193,24 @@ def compile_installer(bundle: Path, values: dict, iscc: Path, output_dir: Path, 
     if (delta_entries is None) != (base_manifest_sha256 is None):
         raise ValueError("Delta entries and exact base SHA must be supplied together.")
     output_dir.mkdir(parents=True, exist_ok=True)
+    target = load_manifest(bundle / MANIFEST_NAME)
+    if target["version"] != values["APP_VERSION"]:
+        raise ValueError("The bundled manifest version differs from the installer version.")
+    managed_include = output_dir / (Path(output_name).stem + "-managed.iss")
+    managed_lines = ["procedure FillTargetManaged(Paths: TStringList);", "begin"]
+    for relative in [*(item["path"] for item in target["files"]), MANIFEST_NAME]:
+        managed_lines.append("  Paths.Add('" + relative.replace("'", "''") + "');")
+    managed_lines.append("end;")
+    managed_include.write_text("\n".join(managed_lines) + "\n", encoding="utf-8-sig")
+    payload_include = output_dir / (Path(output_name).stem + "-files.iss")
+    payload_include.write_text("[Files]\n" + "\n".join(_file_entry(bundle, relative) for relative in
+                              [*(item["path"] for item in target["files"]), MANIFEST_NAME]) + "\n", encoding="utf-8-sig")
     command = [str(iscc), "/Qp", f"/DAppVersion={values['APP_VERSION']}", f"/DAppName={values['APP_NAME']}",
                f"/DRepository={values['REPOSITORY']}", f"/DApplicationMutex={values['APPLICATION_MUTEX']}",
+               f"/DAppUserModelID={values.get('APP_USER_MODEL_ID', 'NCFXZ.QtPackageTool')}",
                f"/DFileManifestName={MANIFEST_NAME}", f"/DInstallerBaseName={Path(output_name).stem}",
-               f"/DDistDir={bundle.resolve()}", f"/DOutputDir={output_dir.resolve()}"]
+               f"/DDistDir={bundle.resolve()}", f"/DOutputDir={output_dir.resolve()}",
+               f"/DManagedPathsInclude={managed_include.resolve()}", f"/DPayloadFilesInclude={payload_include.resolve()}"]
     if delta_entries is not None:
         if not _SHA256.fullmatch(base_manifest_sha256):
             raise ValueError("Invalid base manifest SHA256.")
@@ -215,6 +229,14 @@ def _inno_quote(value: str, *, runtime: bool = False) -> str:
     if runtime:
         value = value.replace("{", "{{")
     return '"' + value.replace('"', '""') + '"'
+
+
+def _file_entry(bundle: Path, relative: str) -> str:
+    source = _source_file(bundle, relative)
+    parts = relative.replace("/", "\\").rsplit("\\", 1)
+    parent, name = (parts if len(parts) == 2 else ("", parts[0]))
+    destination = '"{app}' + ("\\" + parent.replace("{", "{{") if parent else "") + '"'
+    return f"Source: {_inno_quote(str(source))}; DestDir: {destination}; DestName: {_inno_quote(name, runtime=True)}; Flags: ignoreversion"
 
 
 def build_delta(base_manifest: Path, target_manifest: Path, bundle: Path, values: dict, iscc: Path, output_dir: Path) -> Path:
@@ -239,11 +261,7 @@ def build_delta(base_manifest: Path, target_manifest: Path, bundle: Path, values
     work.mkdir(parents=True, exist_ok=True)
     lines = ["; Generated exact managed file changes.", "[Files]"]
     for relative in [*changed, MANIFEST_NAME]:
-        source = _source_file(bundle, relative)
-        parts = relative.replace("/", "\\").rsplit("\\", 1)
-        parent, name = (parts if len(parts) == 2 else ("", parts[0]))
-        destination = '"{app}' + ("\\" + parent.replace("{", "{{") if parent else "") + '"'
-        lines.append(f"Source: {_inno_quote(str(source))}; DestDir: {destination}; DestName: {_inno_quote(name, runtime=True)}; Flags: ignoreversion")
+        lines.append(_file_entry(bundle, relative))
     lines.append("[InstallDelete]")
     for relative in removed:
         path = relative.replace("/", "\\").replace("{", "{{")

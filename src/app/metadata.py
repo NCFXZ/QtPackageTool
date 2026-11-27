@@ -3,6 +3,7 @@
 """Shared application and release metadata."""
 
 APP_NAME = "Qt Package Tool"
+APP_USER_MODEL_ID = "NCFXZ.QtPackageTool"
 APP_VERSION = "1.0.0"
 RELEASE_DATE = "2026/11/27"
 REPOSITORY = "NCFXZ/QtPackageTool"

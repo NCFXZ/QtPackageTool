@@ -42,8 +42,14 @@ def launch_delta_update(archive: Path, release, app_dir: Path, process_id: int) 
         or manifest_info.st_size > 1024 * 1024
     ):
         raise ValueError("The installed file manifest is invalid.")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("schema") != 1 or manifest.get("version") != APP_VERSION:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except RecursionError as error:
+        raise ValueError("The installed file manifest is invalid.") from error
+    if (
+        not isinstance(manifest, dict) or type(manifest.get("schema")) is not int
+        or manifest["schema"] != 1 or manifest.get("version") != APP_VERSION
+    ):
         raise ValueError("The installed file manifest does not match this version.")
     entries = manifest.get("files")
     matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == UPDATER_NAME] if isinstance(entries, list) else []
@@ -79,6 +85,7 @@ def launch_delta_update(archive: Path, release, app_dir: Path, process_id: int) 
                 "failure": tr("The update could not be completed. Download the full installer to try again."),
                 "restart_failure": tr("The update was installed, but the application could not be started. Start Qt Package Tool manually."),
                 "diagnostics": tr("Diagnostics"),
+                "conflict": tr("The update was stopped to protect existing files in the installation folder. Move the conflicting files or folders elsewhere, then check for updates again."),
             },
         }
         with plan_path.open("x", encoding="utf-8") as stream:

@@ -84,15 +84,45 @@ class PathTable(TableWidget):
     def __init__(self, parent: QWidget, accept_drops: bool = False):
         super().__init__(parent)
         self._placeholder = ""
+        self._column_weights: tuple[int, ...] = ()
         self.setAcceptDrops(accept_drops)
         self.viewport().setAcceptDrops(accept_drops)
         model = self.model()
         model.rowsInserted.connect(self.viewport().update)
         model.rowsRemoved.connect(self.viewport().update)
+        for signal in (model.rowsInserted, model.rowsRemoved, model.dataChanged, model.headerDataChanged):
+            signal.connect(self._fit_columns)
 
     def setPlaceholderText(self, text: str) -> None:
         self._placeholder = text
         self.viewport().update()
+
+    def set_column_weights(self, weights: tuple[int, ...]) -> None:
+        """Share the width by weight; a weight of 0 fits that column to its content."""
+        self._column_weights = weights
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.horizontalHeader().setStretchLastSection(False)
+        self._fit_columns()
+
+    def _fit_columns(self) -> None:
+        if not self._column_weights:
+            return
+        header = self.horizontalHeader()
+        available = self.viewport().width()
+        fitted = {
+            column: max(header.sectionSizeHint(column), self.sizeHintForColumn(column)) + ls.TABLE_CELL_PADDING
+            for column, weight in enumerate(self._column_weights) if not weight
+        }
+        remaining = max(available - sum(fitted.values()), 0)
+        total = sum(self._column_weights) or 1
+        widths = [fitted.get(column, remaining * weight // total) for column, weight in enumerate(self._column_weights)]
+        widths[-1] += max(available - sum(widths), 0)
+        for column, width in enumerate(widths):
+            self.setColumnWidth(column, width)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_columns()
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -168,12 +198,15 @@ class QtPackageSettingsUI(LocalizedPage):
             caption="One subfolder per package",
         )))
 
+        layout.addSpacing(ls.SECTION_SPACING)
+        layout.addWidget(self.localized(StrongBodyLabel(self), "Build"))
+
         self.build_combo_box = ComboBox(self)
         self.build_combo_box.setFixedSize(ls.ACTION_WIDTH, ls.CONTROL_HEIGHT)
         self.build_combo_box.addItem("Release", userData=True)
         self.build_combo_box.addItem("Debug", userData=False)
         layout.addWidget(ls.form_card(self._form_row(
-            icons.BUILD_MODE, "Build Options", self.build_combo_box
+            icons.BUILD_MODE, "Build Mode", self.build_combo_box
         )))
 
         self.clean_switch = SwitchButton(self)
@@ -187,16 +220,17 @@ class QtPackageSettingsUI(LocalizedPage):
         layout.addSpacing(ls.SECTION_SPACING)
         layout.addWidget(self.localized(StrongBodyLabel(self), "External Files & Dependencies"))
 
-        self.external_table = self._table(2, accept_drops=True)
-        self.bind_text(self.external_table.setPlaceholderText, "Drop files or folders here, or use the buttons below")
+        self.external_table = self._table((65, 35), accept_drops=True)
+        self.bind_text(self.external_table.setPlaceholderText, "Drop files or folders here, or use the buttons above")
         self.external_file_button = self._action(icons.ADD_EXTERNAL_FILE, "Select File")
         self.external_folder_button = self._action(icons.ADD_EXTERNAL_FOLDER, "Select Folder")
-        self.external_remove_button = self._action(icons.REMOVE, "Remove")
-        self.external_remove_button.clicked.connect(lambda: self.remove_selected_rows(self.external_table))
+        self.external_remove_button = self._remove_action(self.external_table)
         layout.addWidget(self._table_card(
-            self._form_row(icons.EXTERNAL_FILES, "Include External Files / Folders"),
-            self.external_table,
-            self.external_file_button, self.external_folder_button, self.external_remove_button,
+            self._form_row(
+                icons.EXTERNAL_FILES, "Include External Files / Folders",
+                self.external_file_button, self.external_folder_button,
+            ),
+            self.external_table, self.external_remove_button,
         ))
 
         self.dependencies_module_combo_box = EditableComboBox(self)
@@ -213,11 +247,11 @@ class QtPackageSettingsUI(LocalizedPage):
         self.dependencies_import_button.setDisabled(True)
         self.set_dependency_choices({})
 
-        self.dependencies_table = self._table(4)
+        # A weight of 0 fits the type column to its content; the source path gets the most room.
+        self.dependencies_table = self._table((24, 0, 46, 30))
         self.bind_text(self.dependencies_table.setPlaceholderText, "Search for a dependency above and import it")
         self.dependencies_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.dependencies_remove_button = self._action(icons.REMOVE, "Remove")
-        self.dependencies_remove_button.clicked.connect(lambda: self.remove_selected_rows(self.dependencies_table))
+        self.dependencies_remove_button = self._remove_action(self.dependencies_table)
         layout.addWidget(self._table_card(
             self._form_row(
                 icons.DEPENDENCIES, "Include Qt Dependencies",
@@ -251,15 +285,27 @@ class QtPackageSettingsUI(LocalizedPage):
         description = self.localized(CaptionLabel(self), caption) if caption is not None else None
         return ls.form_row(icon, heading, *controls, caption=description)
 
-    def _table(self, columns: int, accept_drops: bool = False) -> PathTable:
+    def _remove_action(self, table: QTableWidget) -> PushButton:
+        """A remove button that is only enabled while the table has selected rows."""
+        button = self._action(icons.REMOVE, "Remove")
+        button.clicked.connect(lambda: self.remove_selected_rows(table))
+
+        def sync() -> None:
+            button.setEnabled(bool(table.selectedIndexes()))
+
+        table.itemSelectionChanged.connect(sync)
+        sync()
+        return button
+
+    def _table(self, column_weights: tuple[int, ...], accept_drops: bool = False) -> PathTable:
         table = PathTable(self, accept_drops)
         table.setWordWrap(False)
         table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         table.setBorderVisible(True)
         table.setBorderRadius(8)
         table.setFixedHeight(ls.TABLE_HEIGHT)
-        table.setColumnCount(columns)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.setColumnCount(len(column_weights))
+        table.set_column_weights(column_weights)
         table.verticalHeader().hide()
         return table
 

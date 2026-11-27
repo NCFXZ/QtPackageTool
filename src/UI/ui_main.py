@@ -42,6 +42,10 @@ from UI.i18n import tr
 from UI.ui_preferences import PreferencesUI, THEMES
 
 
+# Without the back button, this lines the window icon up with the navigation icons.
+TITLE_BAR_LEFT = 14
+
+
 class MainUI(FluentWindow):
     def __init__(self, preferences: AppPreferences | None = None):
         """
@@ -87,6 +91,11 @@ class MainUI(FluentWindow):
         self.navigationInterface.setExpandWidth(200)
         self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())
         self.navigationInterface.setMenuButtonVisible(False)
+        # Pages have no hierarchy, so hide the back button but keep its height so items stay below the title bar.
+        self.navigationInterface.setReturnButtonVisible(False)
+        panel = self.navigationInterface.panel
+        # A spacer gets no layout spacing after it, so add that too to keep the original item positions.
+        panel.topLayout.insertSpacing(0, panel.returnButton.height() + panel.topLayout.spacing())
         self._navigation_labels = (
             (self.qt_package_settings, icons.PROJECT_SETUP, "Project Setup", NavigationItemPosition.TOP),
             (self.qt_package_project, icons.PACKAGING, "Packaging", NavigationItemPosition.TOP),
@@ -118,6 +127,11 @@ class MainUI(FluentWindow):
         viewing = self.stackedWidget.currentWidget() is self.qt_package_project
         if viewing and self._packaging_badge_level not in (None, "attension"):
             self.set_packaging_badge(None)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.titleBar.move(TITLE_BAR_LEFT, 0)
+        self.titleBar.resize(self.width() - TITLE_BAR_LEFT, self.titleBar.height())
 
     def closeEvent(self, event) -> None:
         self.preferences.save_window_geometry(self.saveGeometry())

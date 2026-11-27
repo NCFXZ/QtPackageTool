@@ -12,7 +12,6 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QLocale, QPoint, QSettings, Qt
-from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel
 from qfluentwidgets import FluentIcon, Theme
@@ -80,14 +79,18 @@ class UpdateButtonTests(unittest.TestCase):
         def foreground_pixels():
             self.app.processEvents()
             image = self.button.grab().toImage()
+            foreground = self.button.foreground_color()
             center_x, center_y = image.width() // 2, image.height() // 2
             extent = round(12 * image.devicePixelRatio())
             return sum(
                 1
                 for x in range(center_x - extent, center_x + extent)
                 for y in range(center_y - extent, center_y + extent)
-                if (color := image.pixelColor(x, y)).red() < 80
-                and color.green() < 100 and color.blue() < 115
+                if max(
+                    abs((color := image.pixelColor(x, y)).red() - foreground.red()),
+                    abs(color.green() - foreground.green()),
+                    abs(color.blue() - foreground.blue()),
+                ) < 60
             )
 
         self.button.clearFocus()
@@ -237,7 +240,6 @@ class UpdateButtonTests(unittest.TestCase):
     def test_text_actions_have_visible_icons_and_failures_still_retry(self):
         retried = []
         self.about.update_check_requested.connect(lambda: retried.append(True))
-        expected_failure_icon = FluentIcon.CLOSE.icon(Theme.LIGHT, color=QColor("#000000")).pixmap(16, 16).toImage()
         for state in ("idle", "available", "ready"):
             with self.subTest(state=state):
                 self.about.set_update_state(state, version="1.0.1")
@@ -250,6 +252,9 @@ class UpdateButtonTests(unittest.TestCase):
                 self.about.set_update_state(source, version="1.0.1")
                 self.about.set_update_state("error", version="1.0.1", message="Failure details")
                 self.assertFalse(self.button.icon().isNull())
+                expected_failure_icon = FluentIcon.CLOSE.icon(
+                    Theme.LIGHT, color=self.button.foreground_color()
+                ).pixmap(16, 16).toImage()
                 self.assertEqual(self.button.icon().pixmap(16, 16).toImage(), expected_failure_icon)
                 self.assertTrue(self.button.isEnabled())
                 self._click()

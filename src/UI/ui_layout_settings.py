@@ -37,8 +37,14 @@ ACTION_ICON_SPACING = 8
 ACTION_HORIZONTAL_PADDING = 24
 TABLE_HEIGHT = 200
 TABLE_HEADER_HEIGHT = 42
+TABLE_CELL_PADDING = 24
 SECONDARY_TEXT_LIGHT = "#5d5d5d"
 SECONDARY_TEXT_DARK = "#cfcfcf"
+# Muted warm taupe, with separate tones for readable light and dark cards.
+CAUTION_TEXT_LIGHT = "#78695c"
+CAUTION_TEXT_DARK = "#b8aa9c"
+DEFAULT_TEXT_LIGHT = "#000000"
+DEFAULT_TEXT_DARK = "#ffffff"
 
 
 class ElidedLabel(BodyLabel):

@@ -30,10 +30,10 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from build.process import BuildProcess
 from build import cmake, qmake, qml
-from build.cmake import CMAKE_BUILD_DIR, CMAKE_PACKAGE_DIR, CMAKE_PROJECT, is_cmake_project
+from build.cmake import CMAKE_BUILD_DIR, CMAKE_PACKAGE_DIR, is_cmake_project
 from build.paths import deployment_path, entry_status, remove_readonly, resource_source
-from build.qmake import QMAKE_INTERMEDIATE_NAMES, QMAKE_SETTINGS, is_qmake_intermediate
-from build.qml import QML_SCAN_SKIP_DIRS, QML_SOURCE_COPY, QML_SOURCE_SUFFIXES
+from build.qmake import is_qmake_intermediate
+from build.qml import QML_SOURCE_COPY
 from app.localization import tr
 from deployment.qt_dependencies import QML_MODULE, QT_LIBRARY, QT_PLUGIN, qt_debug_runtime, qt_major_version, runtime_binary
 from deployment.runtime_dependencies import check_qml_modules, qml_runtime_dirs, read_qml_modules, validate_startup_libraries

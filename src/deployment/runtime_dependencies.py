@@ -22,7 +22,7 @@ from pathlib import Path
 import win32api
 from PyQt6.QtCore import QSettings
 
-from deployment.pe import _pe_imports, read_pe_imports
+from deployment.pe import read_pe_imports
 
 
 def _is_reparse_link(path: Path) -> bool:

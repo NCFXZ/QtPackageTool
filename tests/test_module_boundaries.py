@@ -49,7 +49,7 @@ class ModuleBoundaryTests(unittest.TestCase):
             with self.subTest(compiled=compiled):
                 app_dir = ROOT / "logs" / "simulated-dist" if compiled else ROOT
                 module_path = app_dir / "app" / "runtime.py" if compiled else runtime_path
-                namespace = {"__file__": str(module_path)}
+                namespace = {"__file__": str(module_path), "__name__": "app.runtime", "__package__": "app"}
                 with patch.dict(sys.modules, {"__main__": SimpleNamespace(__compiled__=compiled)}):
                     exec(compile(source, str(module_path), "exec"), namespace)
                 self.assertEqual(namespace["APP_DIR"], app_dir)

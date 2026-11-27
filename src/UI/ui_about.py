@@ -19,7 +19,7 @@ import os
 
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QApplication, QLabel, QWidget
 from PyQt6.QtCore import QEvent, QSize, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QPixmap
+from PyQt6.QtGui import QDesktopServices, QIcon
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -141,11 +141,8 @@ class AboutUI(LocalizedPage):
         row.setSpacing(ls.ICON_TEXT_SPACING)
 
         logo = QLabel(card)
-        logo.setPixmap(QPixmap(icons.app_logo_path()).scaled(
-            QSize(LOGO_SIZE, LOGO_SIZE),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
+        # QIcon renders at the device pixel ratio, so the logo stays sharp on high-DPI screens.
+        logo.setPixmap(QIcon(icons.app_logo_path()).pixmap(QSize(LOGO_SIZE, LOGO_SIZE)))
         row.addWidget(logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text = QVBoxLayout()

@@ -18,7 +18,7 @@ import win32con
 import win32event
 import win32process
 
-from delta import MANIFEST_NAME, file_sha256, load_manifest
+from delta import MANIFEST_NAME, encode_manifest, file_sha256, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = r"Software\QtPackageTool\QtPackageTool"
@@ -184,6 +184,12 @@ def main() -> None:
         obsolete = install / "PyQt6" / "Qt6" / "plugins" / "styles" / "obsolete.dll"
         obsolete.parent.mkdir(parents=True, exist_ok=True)
         obsolete.write_bytes(b"obsolete plugin from an older version")
+        previous = load_manifest(install / MANIFEST_NAME)
+        previous["files"].append({"path": obsolete.relative_to(install).as_posix(), "size": obsolete.stat().st_size,
+                                  "sha256": file_sha256(obsolete)})
+        (install / MANIFEST_NAME).write_bytes(encode_manifest(previous))
+        user_plugin = obsolete.with_name("user-plugin.dll")
+        user_plugin.write_bytes(b"unknown user plugin must be preserved")
         user_file = install / "user-file.txt"
         user_file.write_text("preserve user file", encoding="ascii")
         executable.write_bytes(b"previous version placeholder")
@@ -202,8 +208,9 @@ def main() -> None:
         assert time.monotonic() - began >= 3
         assert hashlib.file_digest(executable.open("rb"), "sha256").hexdigest() == installed_digest
         assert not obsolete.exists() and user_file.read_text() == "preserve user file"
+        assert user_plugin.read_bytes() == b"unknown user plugin must be preserved"
         verify_managed_files()
-        confirm("/WAITPID waits for normal exit before overwriting; upgrade removes obsolete packaged plugins and preserves user files")
+        confirm("/WAITPID waits for normal exit; upgrade removes only manifest-owned obsolete plugins and preserves unknown user plugins/files")
 
         deadline = time.monotonic() + 20
         while not application_pids(executable) and time.monotonic() < deadline:

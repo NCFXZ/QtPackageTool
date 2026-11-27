@@ -40,6 +40,8 @@ _create_job = ctypes.WinDLL("kernel32", use_last_error=True).CreateJobObjectW
 _create_job.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
 _create_job.restype = wintypes.HANDLE
 _EXIT_GRACE_SECONDS = 1.0
+_OUTPUT_BUDGET = 256 * 1024
+_PENDING_LIMIT = 64 * 1024
 
 
 class BuildProcess(QObject):
@@ -149,15 +151,23 @@ class BuildProcess(QObject):
         for stream in self._streams:
             pipe, decoder, is_stderr, pending = stream
             chunks = []
+            remaining = _OUTPUT_BUDGET
             try:
-                while True:
+                # Return to Qt regularly even when a tool writes continuously, so
+                # queued cancellation and the other stream cannot be starved.
+                # The final drain runs only after every process in the job exited.
+                while final or remaining > 0:
                     _, available, _ = win32pipe.PeekNamedPipe(pipe, 0)
                     if not available:
                         break
-                    _, chunk = win32file.ReadFile(pipe, available)
+                    size = min(available, 65536)
+                    if not final:
+                        size = min(size, remaining)
+                    _, chunk = win32file.ReadFile(pipe, size)
                     if not chunk:
                         break
                     chunks.append(chunk)
+                    remaining -= len(chunk)
             except pywintypes.error as exc:
                 if exc.winerror not in (
                     winerror.ERROR_BROKEN_PIPE,
@@ -178,6 +188,11 @@ class BuildProcess(QObject):
                     self.output.emit(text[:split + 1], is_stderr)
                 else:
                     stream[3] = text
+                # A tool need not terminate its diagnostic lines. Forward long
+                # partial lines instead of retaining an unbounded string.
+                if len(stream[3]) > _PENDING_LIMIT:
+                    self.output.emit(stream[3][:-_PENDING_LIMIT], is_stderr)
+                    stream[3] = stream[3][-_PENDING_LIMIT:]
 
     @pyqtSlot()
     def _poll(self) -> None:

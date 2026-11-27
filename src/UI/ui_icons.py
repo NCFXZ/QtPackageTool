@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from qfluentwidgets import FluentIcon as FIF, FluentIconBase, Theme
 from qfluentwidgets.common.icon import getIconColor
 
@@ -19,12 +19,15 @@ class _StopIcon(FluentIconBase):
 
     def render(self, painter, rect, theme=Theme.AUTO, indexes=None, **attributes):
         size = min(rect.width(), rect.height())
-        inset = size * 0.17
+        inset = size * 0.10
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(attributes.get("fill", getIconColor(theme))))
-        painter.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset), inset / 2, inset / 2)
+        # Match the thin outline of Fluent's Play icon; leave the centre empty.
+        painter.setPen(QPen(QColor(attributes.get("fill", getIconColor(theme))), size * 145 / 2048,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        radius = size * 0.11
+        painter.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset), radius, radius)
         painter.restore()
 
 
@@ -35,7 +38,7 @@ ABOUT = FIF.INFO
 
 QT_KIT = FIF.CODE
 BROWSE = FIF.FOLDER
-PROJECT = FIF.EDIT
+PROJECT = FIF.QUICK_NOTE
 OUTPUT = FIF.SAVE
 BUILD_MODE = FIF.COMMAND_PROMPT
 CLEAN_BUILD_FILES = FIF.BROOM
